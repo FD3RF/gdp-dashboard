@@ -223,5 +223,95 @@
     "timestamp": "2026-03-12T10:09:18.316786",
     "metadata": {},
     "importance": 0.8
+  },
+  {
+    "id": "learning_8a620203_20260312102522",
+    "type": "learning",
+    "content": {
+      "lesson": "test"
+    },
+    "timestamp": "2026-03-12T10:25:22.187445",
+    "metadata": {},
+    "importance": 1.0
+  },
+  {
+    "id": "error_log_849d29a7_20260312102522",
+    "type": "error_log",
+    "content": {
+      "type": "code_review",
+      "file": "test.py",
+      "issues": [
+        {
+          "file_path": "test.py",
+          "line": 3,
+          "severity": "warning",
+          "message": "Use of eval() is dangerous",
+          "suggestion": "Review and fix security issue"
+        }
+      ]
+    },
+    "timestamp": "2026-03-12T10:25:22.206985",
+    "metadata": {},
+    "importance": 0.7
+  },
+  {
+    "id": "error_log_b2a9bc4c_20260312102522",
+    "type": "error_log",
+    "content": {
+      "error": "ModuleNotFoundError: No module named 'test'",
+      "context": {
+        "type": "import",
+        "file": null,
+        "line": null
+      }
+    },
+    "timestamp": "2026-03-12T10:25:22.208065",
+    "metadata": {},
+    "importance": 0.8
+  },
+  {
+    "id": "learning_8a620203_20260312102528",
+    "type": "learning",
+    "content": {
+      "lesson": "test"
+    },
+    "timestamp": "2026-03-12T10:25:28.194509",
+    "metadata": {},
+    "importance": 1.0
+  },
+  {
+    "id": "error_log_849d29a7_20260312102528",
+    "type": "error_log",
+    "content": {
+      "type": "code_review",
+      "file": "test.py",
+      "issues": [
+        {
+          "file_path": "test.py",
+          "line": 3,
+          "severity": "warning",
+          "message": "Use of eval() is dangerous",
+          "suggestion": "Review and fix security issue"
+        }
+      ]
+    },
+    "timestamp": "2026-03-12T10:25:28.214026",
+    "metadata": {},
+    "importance": 0.7
+  },
+  {
+    "id": "error_log_b2a9bc4c_20260312102528",
+    "type": "error_log",
+    "content": {
+      "error": "ModuleNotFoundError: No module named 'test'",
+      "context": {
+        "type": "import",
+        "file": null,
+        "line": null
+      }
+    },
+    "timestamp": "2026-03-12T10:25:28.215129",
+    "metadata": {},
+    "importance": 0.8
   }
 ]
