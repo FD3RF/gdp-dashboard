@@ -1,5 +1,34 @@
-# Data modules
-from .market_stream import get_realtime_eth_data
-from .kline_builder import calculate_indicators
+"""
+数据层模块 (Layer 2)
+"""
 
-__all__ = ['get_realtime_eth_data', 'calculate_indicators']
+from .market_stream import (
+    MultiExchangeManager,
+    get_exchange_manager,
+    generate_simulated_data,
+    get_realtime_eth_data,
+    get_orderbook_data,
+    get_funding_rate,
+)
+from .kline_builder import calculate_indicators, get_latest_indicators
+from .social_stream import (
+    SocialStreamCollector,
+    SentimentAnalyzer,
+    SocialPost,
+    social_sentiment_score,
+)
+
+__all__ = [
+    "MultiExchangeManager",
+    "get_exchange_manager",
+    "generate_simulated_data",
+    "get_realtime_eth_data",
+    "get_orderbook_data",
+    "get_funding_rate",
+    "calculate_indicators",
+    "get_latest_indicators",
+    "SocialStreamCollector",
+    "SentimentAnalyzer",
+    "SocialPost",
+    "social_sentiment_score",
+]

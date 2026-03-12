@@ -2,7 +2,7 @@
 """
 Oracle AI Agent 主程序
 =====================
-12层架构核心整合
+12层架构核心整合 + 6大升级功能
 """
 
 import time
@@ -19,26 +19,50 @@ from data.market_stream import (
     get_exchange_manager
 )
 
+# Layer 2-4: 社交情绪数据 (新增)
+from data.social_stream import social_sentiment_score
+
 # Layer 3/4: 数据处理与融合
 from data.kline_builder import calculate_indicators, get_latest_indicators
 
 # Layer 5: 特征工程层
-from features.orderbook_features import OrderbookAnalyzer, analyze_orderbook_imbalance
+from features.orderbook_features import OrderbookAnalyzer
 from features.hurst import HurstExponent
 from features.liquidity_heatmap import generate_liquidity_heatmap
 from features.funding_rate import analyze_funding_rate
 
+# Layer 5: 新增特征模块
+from features.whale_monitor import whale_alert
+from features.sentiment_features import get_sentiment_features
+from features.funding_extreme import funding_extreme_alert
+
 # Layer 6/7/8: AI分析层
 from ai.probability_model import calculate_probabilities
+
+# Layer 6-8: 强化学习 (新增)
+try:
+    from ai.rl_agent import PPOAgent, MarketState, TradingAction, rl_decision
+    RL_AVAILABLE = True
+except ImportError:
+    RL_AVAILABLE = False
 
 # Layer 9: 交易计划层
 from analysis.decision_maker import make_decision, Signal
 from analysis.trade_plan import generate_trade_plan
 from analysis.risk_monitor import risk_warning
 
+# Layer 10: 风险矩阵 (新增)
+from analysis.risk_matrix import calculate_risk_matrix, RiskMatrix
+
 # Layer 11: 解释层
 from explain.signal_explainer import explain_signal
 from explain.signal_history import record_signal, get_signal_reliability
+
+# Layer 11: 在线学习进化 (新增)
+from evolution.evolution_manager import get_evolution_status, run_evolution
+
+# Layer 1: 事件驱动 (新增)
+from infrastructure.event_bus import get_event_bus, EventType, publish_event
 
 # 配置
 from config import AGENT_CONFIG, RISK_CONFIG, BASE_PRICES
@@ -46,19 +70,24 @@ from config import AGENT_CONFIG, RISK_CONFIG, BASE_PRICES
 
 @dataclass
 class SystemState:
-    """系统状态"""
+    """系统状态 - 12层架构 + 6大升级"""
+    # 基础信息
     symbol: str
     timestamp: str
     exchange: str
     price: float
+    
+    # Layer 3-4: 指标
     indicators: Dict[str, Any]
+    
+    # Layer 5-8: AI决策
     probabilities: Dict[str, float]
     signal: Signal
     plan: Any
     risk: Any
     orderbook: Dict[str, Any]
     
-    # 新增功能
+    # 原有特征
     hurst: float
     hurst_state: str
     liquidity: Dict[str, Any]
@@ -66,12 +95,31 @@ class SystemState:
     explanation: Dict[str, Any]
     reliability: Dict[str, Any]
     
+    # === 新增6大功能 ===
+    # 1. 链上巨鲸监控
+    whale_alerts: Dict[str, Any] = field(default_factory=dict)
+    
+    # 2. 社交情绪
+    social_sentiment: Dict[str, Any] = field(default_factory=dict)
+    
+    # 3. 资金费率极值
+    funding_extreme: Dict[str, Any] = field(default_factory=dict)
+    
+    # 4. 强化学习决策
+    rl_decision: Dict[str, Any] = field(default_factory=dict)
+    
+    # 5. 风险矩阵
+    risk_matrix: Dict[str, Any] = field(default_factory=dict)
+    
+    # 6. 进化状态
+    evolution_status: Dict[str, Any] = field(default_factory=dict)
+    
     is_simulated: bool = False
 
 
 def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optional[SystemState]:
     """
-    运行完整分析流程 (12层架构整合)
+    运行完整分析流程 (12层架构整合 + 6大升级)
     
     Args:
         symbol: 交易对
@@ -124,6 +172,16 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     funding_rate = get_funding_rate(symbol)
     funding = analyze_funding_rate(funding_rate)
     
+    # === 新增功能 1: 链上巨鲸监控 ===
+    whale_data = whale_alert(current_price)
+    
+    # === 新增功能 2: 社交情绪分析 ===
+    sentiment_data = social_sentiment_score()
+    sentiment_features = get_sentiment_features(sentiment_data)
+    
+    # === 新增功能 3: 多交易所资金费率极值 ===
+    funding_extreme_data = funding_extreme_alert()
+    
     # === Layer 6/7/8: AI分析 ===
     probs = calculate_probabilities(df)
     
@@ -138,12 +196,72 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
             probs['short'] = min(90, probs['short'] + 5)
             probs['long'] = max(5, probs['long'] - 3)
     
+    # 融合社交情绪
+    if sentiment_features.overall_score > 60:
+        probs['long'] = min(90, probs['long'] + 3)
+    elif sentiment_features.overall_score < 40:
+        probs['short'] = min(90, probs['short'] + 3)
+    
+    # 重新归一化概率（确保总和为100%）
+    total = probs['long'] + probs['short'] + probs['hold']
+    probs['long'] = round(probs['long'] / total * 100, 1)
+    probs['short'] = round(probs['short'] / total * 100, 1)
+    probs['hold'] = round(probs['hold'] / total * 100, 1)
+    
+    # === 新增功能 4: 强化学习决策 ===
+    rl_result = {}
+    if RL_AVAILABLE:
+        try:
+            market_state = MarketState(
+                price=current_price,
+                volume=indicators.get('volume', 0),
+                orderbook_imbalance=orderbook_analysis.imbalance if hasattr(orderbook_analysis, 'imbalance') else 0,
+                hurst=hurst_value,
+                fractal_dim=1.5,  # 默认值
+                funding_rate=funding_rate or 0,
+                sentiment_score=sentiment_features.overall_score,
+                volatility=indicators.get('volatility', 0.02),
+                momentum=indicators.get('momentum', 0),
+            )
+            rl_result = rl_decision(market_state)
+        except Exception as e:
+            rl_result = {"error": str(e)}
+    
     # === Layer 9: 决策 ===
     decision = make_decision(probs)
     plan = generate_trade_plan(df, decision.signal)
     
     # === Layer 10: 风险预警 ===
     risk = risk_warning(df)
+    
+    # === 新增功能 5: 多维风险矩阵 ===
+    risk_matrix_result = calculate_risk_matrix(
+        market_data={
+            "hurst": hurst_value,
+            "fractal_dim": 1.5,
+            "trend": "up" if hurst_value > 0.55 else "down" if hurst_value < 0.45 else "neutral",
+            "orderbook_imbalance": orderbook_analysis.imbalance if hasattr(orderbook_analysis, 'imbalance') else 0,
+            "liquidity_zones": liquidity.get('support_zones', []) + liquidity.get('resistance_zones', []),
+            "trap_detected": len(liquidity.get('trap_warnings', [])) > 0,
+            "volatility": indicators.get('volatility', 0.02),
+            "avg_volatility": indicators.get('avg_volatility', 0.02),
+        },
+        funding_data={
+            "rate": funding_rate or 0,
+            "z_score": funding_extreme_data.get('summary', {}).get('avg_z_score', 0),
+            "crowd_direction": funding_extreme_data.get('summary', {}).get('crowding_direction', 'neutral'),
+        },
+        sentiment_data={
+            "score": sentiment_features.overall_score,
+            "is_extreme": sentiment_features.is_extreme,
+            "extreme_type": sentiment_features.extreme_type,
+        },
+        whale_data={
+            "net_flow": whale_data.get('flow_summary', {}).get('net_flow_eth', 0),
+            "high_impact_count": whale_data.get('high_impact_count', 0),
+            "recent_alerts": whale_data.get('alerts', []),
+        },
+    )
     
     # === Layer 11: 解释 ===
     explanation = explain_signal(
@@ -156,6 +274,9 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     
     # 信号可靠度
     reliability = get_signal_reliability(symbol)
+    
+    # === 新增功能 6: 进化状态 ===
+    evolution_data = get_evolution_status()
     
     # 检测模拟数据
     is_simulated = use_simulated or (symbol == "ETH/USDT" and 3000 < current_price < 4000)
@@ -170,6 +291,20 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
             stop_loss=plan.stop_loss if plan else 0,
             take_profit=plan.take_profit_1 if plan else 0
         )
+    
+    # 发布事件 (事件驱动)
+    try:
+        publish_event(
+            EventType.SIGNAL_GENERATED,
+            "main",
+            {
+                "signal": decision.signal.value,
+                "price": current_price,
+                "confidence": probs['confidence'],
+            }
+        )
+    except Exception:
+        pass  # 事件发布失败不影响主流程
     
     return SystemState(
         symbol=symbol,
@@ -194,6 +329,18 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
         funding=funding,
         explanation=explanation,
         reliability=reliability,
+        # 新增6大功能
+        whale_alerts=whale_data,
+        social_sentiment={
+            "score": sentiment_features.overall_score,
+            "trend": sentiment_features.trend,
+            "dominance": sentiment_features.dominance,
+            "is_extreme": sentiment_features.is_extreme,
+        },
+        funding_extreme=funding_extreme_data,
+        rl_decision=rl_result,
+        risk_matrix=risk_matrix_result,
+        evolution_status=evolution_data,
         is_simulated=is_simulated
     )
 
@@ -289,7 +436,7 @@ def format_output(state: SystemState) -> str:
 
 # Oracle Agent 类
 class OracleAgent:
-    """Oracle AI Agent"""
+    """Oracle AI Agent - 12层架构 + 6大升级"""
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config = config or {}
@@ -321,6 +468,13 @@ class OracleAgent:
             'liquidity': state.liquidity,
             'explanation': state.explanation,
             'reliability': state.reliability,
+            # 新增功能
+            'whale_alerts': state.whale_alerts,
+            'social_sentiment': state.social_sentiment,
+            'funding_extreme': state.funding_extreme,
+            'rl_decision': state.rl_decision,
+            'risk_matrix': state.risk_matrix,
+            'evolution_status': state.evolution_status,
             'plan': {
                 'entry': state.plan.entry if state.plan else 0,
                 'stop': state.plan.stop_loss if state.plan else 0,

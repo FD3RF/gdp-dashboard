@@ -37,5 +37,83 @@
     "pnl_percent": null,
     "exit_price": null,
     "exit_time": null
+  },
+  {
+    "timestamp": "2026-03-12T17:36:09.993204",
+    "symbol": "ETH/USDT",
+    "signal": "SHORT",
+    "price": 3486.016723185446,
+    "confidence": 63.7,
+    "stop_loss": 3663.31,
+    "take_profit": 3406.44,
+    "result": null,
+    "pnl_percent": null,
+    "exit_price": null,
+    "exit_time": null
+  },
+  {
+    "timestamp": "2026-03-12T18:13:53.318762",
+    "symbol": "ETH/USDT",
+    "signal": "SHORT",
+    "price": 3281.292966404581,
+    "confidence": 53.1,
+    "stop_loss": 3442.77,
+    "take_profit": 3214.81,
+    "result": null,
+    "pnl_percent": null,
+    "exit_price": null,
+    "exit_time": null
+  },
+  {
+    "timestamp": "2026-03-12T18:21:53.593354",
+    "symbol": "ETH/USDT",
+    "signal": "SHORT",
+    "price": 3279.0771848721897,
+    "confidence": 53.1,
+    "stop_loss": 3559.78,
+    "take_profit": 3196.45,
+    "result": null,
+    "pnl_percent": null,
+    "exit_price": null,
+    "exit_time": null
+  },
+  {
+    "timestamp": "2026-03-12T18:22:59.227552",
+    "symbol": "ETH/USDT",
+    "signal": "LONG",
+    "price": 3925.416837636383,
+    "confidence": 53.1,
+    "stop_loss": 3652.72,
+    "take_profit": 4015.58,
+    "result": null,
+    "pnl_percent": null,
+    "exit_price": null,
+    "exit_time": null
+  },
+  {
+    "timestamp": "2026-03-12T18:26:14.227081",
+    "symbol": "ETH/USDT",
+    "signal": "SHORT",
+    "price": 2926.6615219876026,
+    "confidence": 63.7,
+    "stop_loss": 3107.92,
+    "take_profit": 2865.79,
+    "result": null,
+    "pnl_percent": null,
+    "exit_price": null,
+    "exit_time": null
+  },
+  {
+    "timestamp": "2026-03-12T18:26:45.276854",
+    "symbol": "ETH/USDT",
+    "signal": "LONG",
+    "price": 2968.458099655233,
+    "confidence": 53.1,
+    "stop_loss": 2852.92,
+    "take_profit": 3037.74,
+    "result": null,
+    "pnl_percent": null,
+    "exit_price": null,
+    "exit_time": null
   }
 ]

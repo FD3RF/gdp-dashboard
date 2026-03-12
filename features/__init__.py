@@ -1,19 +1,48 @@
-# features/__init__.py
 """
-特征工程层模块
-Layer 5: 特征工程层 (AI的眼睛)
+特征工程模块 (Layer 5)
 """
 
-from .orderbook_features import OrderbookAnalyzer
-from .hurst import HurstExponent
-from .fractal import FractalDimension
-from .volatility import VolatilityCluster
-from .liquidity_heatmap import LiquidityHeatmap
+from .hurst import HurstExponent, calculate_hurst
+from .fractal import FractalDimension, calculate_fractal_dimension
+from .orderbook_features import OrderbookAnalyzer, analyze_orderbook_imbalance
+from .liquidity_heatmap import LiquidityHeatmapAnalyzer, generate_liquidity_heatmap
+from .funding_rate import FundingRateMonitor, analyze_funding_rate
+from .volatility import VolatilityAnalysis, VolatilityCluster, analyze_volatility
+from .whale_monitor import WhaleMonitor, WhaleAlert, whale_alert
+from .sentiment_features import (
+    SentimentFeatures,
+    SentimentFeatureEngine,
+    get_sentiment_features,
+)
+from .funding_extreme import (
+    MultiExchangeFundingMonitor,
+    FundingRateData,
+    FundingExtremeAlert,
+    funding_extreme_alert,
+)
 
 __all__ = [
-    'OrderbookAnalyzer', 
-    'HurstExponent', 
-    'FractalDimension',
-    'VolatilityCluster',
-    'LiquidityHeatmap'
+    "HurstExponent",
+    "calculate_hurst",
+    "FractalDimension",
+    "calculate_fractal_dimension",
+    "OrderbookAnalyzer",
+    "analyze_orderbook_imbalance",
+    "LiquidityHeatmapAnalyzer",
+    "generate_liquidity_heatmap",
+    "FundingRateMonitor",
+    "analyze_funding_rate",
+    "VolatilityAnalysis",
+    "VolatilityCluster",
+    "analyze_volatility",
+    "WhaleMonitor",
+    "WhaleAlert",
+    "whale_alert",
+    "SentimentFeatures",
+    "SentimentFeatureEngine",
+    "get_sentiment_features",
+    "MultiExchangeFundingMonitor",
+    "FundingRateData",
+    "FundingExtremeAlert",
+    "funding_extreme_alert",
 ]

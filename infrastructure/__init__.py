@@ -1,10 +1,34 @@
-# infrastructure/__init__.py
 """
-基础设施层模块
-Layer 1: 系统基础设施层
+基础设施模块 (Layer 1)
 """
 
-from .cache import RedisCache
-from .message_queue import KafkaProducer
+from .cache import RedisCache, cached
+from .message_queue import KafkaProducer, DataStream, get_data_stream
+from .event_bus import (
+    EventBus,
+    Event,
+    EventType,
+    EventHandler,
+    RiskEventHandler,
+    WhaleAlertHandler,
+    StrategyTrigger,
+    get_event_bus,
+    publish_event,
+)
 
-__all__ = ['RedisCache', 'KafkaProducer']
+__all__ = [
+    "RedisCache",
+    "cached",
+    "KafkaProducer",
+    "DataStream",
+    "get_data_stream",
+    "EventBus",
+    "Event",
+    "EventType",
+    "EventHandler",
+    "RiskEventHandler",
+    "WhaleAlertHandler",
+    "StrategyTrigger",
+    "get_event_bus",
+    "publish_event",
+]

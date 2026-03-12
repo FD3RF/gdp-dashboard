@@ -1,6 +1,30 @@
-# Analysis modules
-from .decision_maker import make_decision
-from .trade_plan import generate_trade_plan
-from .risk_monitor import risk_warning
+"""
+分析决策模块 (Layer 9-10)
+"""
 
-__all__ = ['make_decision', 'generate_trade_plan', 'risk_warning']
+from .decision_maker import Signal, Decision, make_decision
+from .trade_plan import TradePlan, generate_trade_plan
+from .risk_monitor import RiskLevel, RiskWarning, risk_warning
+from .risk_matrix import (
+    RiskMatrix,
+    RiskAssessment,
+    RiskFactor,
+    RiskLevel as MatrixRiskLevel,
+    calculate_risk_matrix,
+)
+
+__all__ = [
+    "Signal",
+    "Decision",
+    "make_decision",
+    "TradePlan",
+    "generate_trade_plan",
+    "RiskLevel",
+    "RiskWarning",
+    "risk_warning",
+    "RiskMatrix",
+    "RiskAssessment",
+    "RiskFactor",
+    "MatrixRiskLevel",
+    "calculate_risk_matrix",
+]

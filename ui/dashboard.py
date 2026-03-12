@@ -187,6 +187,131 @@ def main():
     
     st.divider()
     
+    # === 新增6大功能展示 ===
+    st.subheader("🚀 高级分析 (6大升级)")
+    
+    # 第一行: 巨鲸监控 + 社交情绪
+    col_whale, col_sentiment = st.columns(2)
+    
+    with col_whale:
+        st.markdown("**🐋 链上巨鲸监控**")
+        whale = state.whale_alerts
+        flow = whale.get('flow_summary', {})
+        
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("净流入", f"{flow.get('exchange_inflow_eth', 0):.0f} ETH")
+        with c2:
+            st.metric("净流出", f"{flow.get('exchange_outflow_eth', 0):.0f} ETH")
+        with c3:
+            sentiment_icon = "🟢" if flow.get('sentiment') == "看涨" else "🔴" if flow.get('sentiment') == "看跌" else "⚪"
+            st.metric("情绪", f"{sentiment_icon} {flow.get('sentiment', '中性')}")
+        
+        # 显示最近警报
+        for alert in whale.get('alerts', [])[:2]:
+            direction = alert.get('direction', '')
+            icon = "🔴" if 'in' in direction else "🟢" if 'out' in direction else "🐋"
+            st.caption(f"{icon} {alert.get('details', '')[:40]}")
+    
+    with col_sentiment:
+        st.markdown("**📱 社交情绪分析**")
+        sentiment = state.social_sentiment
+        
+        score = sentiment.get('score', 50)
+        progress_color = "green" if score > 60 else "red" if score < 40 else "gray"
+        st.progress(score / 100)
+        
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("情绪分数", f"{score:.1f}")
+        with c2:
+            st.metric("趋势", sentiment.get('trend', 'stable'))
+        with c3:
+            st.metric("主导力量", sentiment.get('dominance', 'neutral'))
+        
+        if sentiment.get('is_extreme'):
+            st.warning(f"⚠️ 检测到极端情绪: {sentiment.get('extreme_type', 'unknown')}")
+    
+    st.divider()
+    
+    # 第二行: 资金费率极值 + 风险矩阵
+    col_funding, col_risk = st.columns(2)
+    
+    with col_funding:
+        st.markdown("**📊 多交易所资金费率极值**")
+        funding_ext = state.funding_extreme
+        summary = funding_ext.get('summary', {})
+        
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("平均费率", f"{summary.get('avg_rate', 0)*100:.4f}%")
+        with c2:
+            st.metric("平均Z-Score", f"{summary.get('avg_z_score', 0):.2f}")
+        with c3:
+            crowd = summary.get('crowding_direction', '中性')
+            icon = "🔴" if "做多" in crowd else "🟢" if "做空" in crowd else "⚪"
+            st.metric("拥挤方向", f"{icon} {crowd}")
+        
+        # 显示警报
+        for alert in funding_ext.get('alerts', [])[:2]:
+            severity = alert.get('severity', 'low')
+            icon = "🚨" if severity == "high" else "⚠️" if severity == "medium" else "ℹ️"
+            st.caption(f"{icon} {alert.get('description', '')[:40]}")
+    
+    with col_risk:
+        st.markdown("**🎯 多维风险矩阵**")
+        risk_mat = state.risk_matrix
+        
+        score = risk_mat.get('score', 50)
+        level = risk_mat.get('level', 'moderate')
+        direction = risk_mat.get('direction', 'neutral')
+        
+        # 风险仪表盘
+        level_icons = {
+            "very_low": "🟢 极低",
+            "low": "🟢 低",
+            "moderate": "🟡 中等",
+            "high": "🔴 高",
+            "very_high": "🔴 极高",
+            "extreme": "🚨 极端"
+        }
+        
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("风险分数", f"{score:.1f}")
+        with c2:
+            st.metric("风险等级", level_icons.get(level, level))
+        with c3:
+            dir_icon = "📈" if direction == "bullish" else "📉" if direction == "bearish" else "➡️"
+            st.metric("方向", f"{dir_icon} {direction}")
+        
+        # 显示警告
+        for warning in risk_mat.get('warnings', [])[:2]:
+            st.warning(warning[:50])
+    
+    st.divider()
+    
+    # 第三行: 进化状态
+    st.markdown("**🧬 策略进化状态**")
+    evolution = state.evolution_status
+    perf = evolution.get('recent_performance', {})
+    
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        st.metric("总信号数", evolution.get('total_signals', 0))
+    with c2:
+        st.metric("胜率", f"{perf.get('win_rate', 0)*100:.1f}%")
+    with c3:
+        st.metric("盈亏比", f"{perf.get('profit_factor', 0):.2f}")
+    with c4:
+        st.metric("平均盈亏%", f"{perf.get('avg_pnl_pct', 0):.2f}%")
+    with c5:
+        weights = evolution.get('current_weights', {})
+        top_feature = max(weights, key=weights.get) if weights else 'N/A'
+        st.metric("最强特征", top_feature)
+    
+    st.divider()
+    
     # === AI 决策解释 ===
     st.subheader("📝 AI 决策解释 (M-35/36)")
     explanation = state.explanation
@@ -214,7 +339,7 @@ def main():
         st.plotly_chart(fig, use_container_width=True)
     
     # 底部
-    st.caption(f"最后更新: {state.timestamp} | 交易所: {state.exchange} | 12层架构 v2.0")
+    st.caption(f"最后更新: {state.timestamp} | 交易所: {state.exchange} | 12层架构 v3.0 + 6大升级")
 
 
 if __name__ == "__main__":
