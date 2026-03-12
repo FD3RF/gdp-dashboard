@@ -1,5 +1,13 @@
 """
 Performance Analyzer for backtest results.
+
+IMPORTANT: 性能指标计算说明
+============================
+- 所有价格以 USDT 计价
+- 年化收益使用几何平均: (1+R)^(365/days) - 1
+- Sharpe 比率: (年化收益 - 无风险利率) / 年化波动率
+- Sortino 比率: 只考虑下行风险
+- 加密货币全年 365 天交易
 """
 
 import logging
@@ -9,10 +17,19 @@ import pandas as pd
 import numpy as np
 from core.base import BaseModule
 
+# 导入精准计算器
+from .precise_performance import (
+    PrecisePerformanceCalculator,
+    PerformanceMetrics,
+    PriceConverter
+)
+
 
 class PerformanceAnalyzer(BaseModule):
     """
     Analyzes trading performance and calculates metrics.
+    
+    使用机构级计算方法确保精准稳定。
     """
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -20,6 +37,14 @@ class PerformanceAnalyzer(BaseModule):
         
         self._risk_free_rate = self.config.get('risk_free_rate', 0.02)
         self._trading_days = self.config.get('trading_days', 365)
+        
+        # 使用精准计算器
+        self._precise_calculator = PrecisePerformanceCalculator(
+            risk_free_rate=self._risk_free_rate
+        )
+        
+        # 价格转换器（确保 USDT 计价）
+        self._price_converter = PriceConverter()
     
     async def initialize(self) -> bool:
         """Initialize the analyzer."""
@@ -35,6 +60,29 @@ class PerformanceAnalyzer(BaseModule):
         """Stop the analyzer."""
         self._running = False
         return True
+    
+    def analyze_precise(
+        self,
+        equity_curve: pd.DataFrame,
+        trades: List[Dict] = None,
+        benchmark_returns: pd.Series = None
+    ) -> PerformanceMetrics:
+        """
+        使用精准计算器分析性能
+        
+        推荐：使用此方法获得机构级精准指标
+        
+        Args:
+            equity_curve: 权益曲线 DataFrame
+            trades: 交易列表
+            benchmark_returns: 基准收益率
+            
+        Returns:
+            PerformanceMetrics 对象
+        """
+        return self._precise_calculator.calculate_metrics(
+            equity_curve, trades, benchmark_returns
+        )
     
     def analyze(
         self,
@@ -120,7 +168,12 @@ class PerformanceAnalyzer(BaseModule):
         return (1 + total_return) ** (365 / days) - 1
     
     def _calculate_sharpe_ratio(self, equity_df: pd.DataFrame) -> float:
-        """Calculate Sharpe ratio."""
+        """
+        Calculate Sharpe ratio.
+        
+        正确公式：Sharpe = (年化收益 - 无风险利率) / 年化波动率
+        使用几何平均年化收益
+        """
         if len(equity_df) < 2:
             return 0
         
@@ -129,11 +182,23 @@ class PerformanceAnalyzer(BaseModule):
         if len(returns) == 0 or returns.std() == 0:
             return 0
         
-        excess_return = returns.mean() * self._trading_days - self._risk_free_rate
-        return excess_return / (returns.std() * np.sqrt(self._trading_days))
+        # 年化收益（几何平均）
+        annualized_return = (1 + returns.mean()) ** self._trading_days - 1
+        
+        # 年化波动率
+        annualized_vol = returns.std() * np.sqrt(self._trading_days)
+        
+        # 夏普比率
+        excess_return = annualized_return - self._risk_free_rate
+        
+        return excess_return / annualized_vol
     
     def _calculate_sortino_ratio(self, equity_df: pd.DataFrame) -> float:
-        """Calculate Sortino ratio."""
+        """
+        Calculate Sortino ratio.
+        
+        只考虑下行风险
+        """
         if len(equity_df) < 2:
             return 0
         
@@ -143,10 +208,18 @@ class PerformanceAnalyzer(BaseModule):
         if len(negative_returns) == 0:
             return float('inf')
         
+        # 年化收益
+        annualized_return = (1 + returns.mean()) ** self._trading_days - 1
+        
+        # 下行标准差
         downside_std = negative_returns.std() * np.sqrt(self._trading_days)
         
         if downside_std == 0:
             return 0
+        
+        excess_return = annualized_return - self._risk_free_rate
+        
+        return excess_return / downside_std
         
         excess_return = returns.mean() * self._trading_days - self._risk_free_rate
         return excess_return / downside_std
