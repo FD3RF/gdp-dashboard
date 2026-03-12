@@ -1,101 +1,258 @@
 # data/market_stream.py
 """
-ETH/USDT 实时行情数据流
-========================
-多交易所数据源，支持降级回退
+Layer 2: 数据采集层 - 全息感知
+==============================
+多交易所冗余接入，防止单点故障
 """
 
 import ccxt
 import pandas as pd
 import numpy as np
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional, Dict, Any, List
 from datetime import datetime, timedelta
 import time
 import logging
+import asyncio
+from dataclasses import dataclass
+from enum import Enum
+
+from config import EXCHANGE_CONFIG, BASE_PRICES
 
 logger = logging.getLogger(__name__)
 
-# 支持的交易对
-SUPPORTED_SYMBOLS = ['ETH/USDT', 'BTC/USDT', 'SOL/USDT']
 
-# 多交易所配置
-EXCHANGES = {
-    'binance': {
-        'class': ccxt.binance,
-        'config': {'enableRateLimit': True}
-    },
-    'coinbase': {
-        'class': ccxt.coinbase,
-        'config': {'enableRateLimit': True}
-    },
-    'kraken': {
-        'class': ccxt.kraken,
-        'config': {'enableRateLimit': True}
-    },
-}
+class DataSource(Enum):
+    """数据源类型"""
+    BINANCE = "binance"
+    COINBASE = "coinbase"
+    KRaken = "kraken"
+    OKX = "okx"
+    SIMULATED = "simulated"
 
 
-class MarketDataStream:
-    """市场数据流"""
+@dataclass
+class MarketData:
+    """市场数据"""
+    symbol: str
+    exchange: str
+    timestamp: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    bid: float
+    ask: float
+    funding_rate: Optional[float] = None
+
+
+class MultiExchangeManager:
+    """
+    多交易所管理器
+    
+    功能：
+    - 模块4: 多交易所行情API冗余
+    - 模块5: Tick数据抓取
+    - 模块6: 订单簿数据
+    - 自动故障转移
+    """
     
     def __init__(self):
-        self.exchanges = {}
-        self.current_exchange = None
+        self.exchanges: Dict[str, ccxt.Exchange] = {}
+        self.current_primary: Optional[str] = None
+        self._last_success: Dict[str, datetime] = {}
+        self._error_count: Dict[str, int] = {}
+        
         self._init_exchanges()
     
-    def _init_exchanges(self):
-        """初始化交易所连接"""
-        for name, config in EXCHANGES.items():
+    def _init_exchanges(self) -> None:
+        """初始化所有启用的交易所"""
+        for exchange_id, config in EXCHANGE_CONFIG.items():
+            if not config.get('enabled', False):
+                continue
+            
             try:
-                self.exchanges[name] = config['class'](config['config'])
-                logger.info(f"✓ {name} 交易所初始化成功")
+                exchange_class = getattr(ccxt, exchange_id)
+                self.exchanges[exchange_id] = exchange_class({
+                    'enableRateLimit': True,
+                    'timeout': 10000,
+                    'options': {
+                        'defaultType': 'spot',
+                    }
+                })
+                logger.info(f"✓ {config['name']} 交易所初始化成功")
+                
+                if self.current_primary is None:
+                    self.current_primary = exchange_id
+                    
             except Exception as e:
-                logger.warning(f"✗ {name} 初始化失败: {e}")
+                logger.warning(f"✗ {config['name']} 初始化失败: {e}")
     
-    def get_ticker(self, symbol: str = "ETH/USDT") -> Tuple[Optional[Dict], str]:
-        """获取行情数据，自动切换交易所"""
-        errors = []
+    def _get_sorted_exchanges(self) -> List[str]:
+        """获取按优先级排序的交易所列表"""
+        sorted_exchanges = sorted(
+            EXCHANGE_CONFIG.items(),
+            key=lambda x: x[1].get('priority', 99)
+        )
+        return [ex_id for ex_id, _ in sorted_exchanges if ex_id in self.exchanges]
+    
+    def fetch_ticker(self, symbol: str) -> Tuple[Optional[Dict], str]:
+        """
+        获取行情数据，自动切换交易所
         
-        for name, exchange in self.exchanges.items():
+        Args:
+            symbol: 交易对
+            
+        Returns:
+            (ticker数据, 交易所名称)
+        """
+        exchanges = self._get_sorted_exchanges()
+        
+        for exchange_id in exchanges:
             try:
+                exchange = self.exchanges[exchange_id]
                 ticker = exchange.fetch_ticker(symbol)
-                return ticker, name
+                
+                self._last_success[exchange_id] = datetime.now()
+                self._error_count[exchange_id] = 0
+                
+                return ticker, exchange_id
+                
             except Exception as e:
-                errors.append(f"{name}: {str(e)[:50]}")
+                self._error_count[exchange_id] = self._error_count.get(exchange_id, 0) + 1
+                logger.debug(f"{exchange_id} 获取行情失败: {e}")
                 continue
         
-        return None, f"所有交易所失败: {'; '.join(errors)}"
+        return None, "所有交易所失败"
     
-    def get_ohlcv(self, symbol: str = "ETH/USDT", timeframe: str = '5m', limit: int = 100) -> Tuple[Optional[pd.DataFrame], str]:
-        """获取K线数据"""
-        errors = []
+    def fetch_ohlcv(self, symbol: str, timeframe: str = '5m', 
+                    limit: int = 100) -> Tuple[Optional[pd.DataFrame], str]:
+        """
+        获取K线数据
         
-        for name, exchange in self.exchanges.items():
+        Args:
+            symbol: 交易对
+            timeframe: 时间周期
+            limit: 数量限制
+            
+        Returns:
+            (DataFrame, 交易所名称)
+        """
+        exchanges = self._get_sorted_exchanges()
+        
+        for exchange_id in exchanges:
             try:
+                exchange = self.exchanges[exchange_id]
                 ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
-                df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                
+                df = pd.DataFrame(
+                    ohlcv, 
+                    columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
+                )
                 df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-                return df, name
+                df['exchange'] = exchange_id
+                
+                return df, exchange_id
+                
             except Exception as e:
-                errors.append(f"{name}: {str(e)[:50]}")
+                logger.debug(f"{exchange_id} 获取K线失败: {e}")
                 continue
         
-        return None, f"所有交易所失败: {'; '.join(errors)}"
+        return None, "所有交易所失败"
+    
+    def fetch_orderbook(self, symbol: str, limit: int = 50) -> Tuple[Optional[Dict], str]:
+        """
+        获取订单簿数据
+        
+        Args:
+            symbol: 交易对
+            limit: 深度限制
+            
+        Returns:
+            (订单簿数据, 交易所名称)
+        """
+        exchanges = self._get_sorted_exchanges()
+        
+        for exchange_id in exchanges:
+            try:
+                exchange = self.exchanges[exchange_id]
+                orderbook = exchange.fetch_order_book(symbol, limit)
+                
+                return orderbook, exchange_id
+                
+            except Exception as e:
+                logger.debug(f"{exchange_id} 获取订单簿失败: {e}")
+                continue
+        
+        return None, "所有交易所失败"
+    
+    def fetch_funding_rate(self, symbol: str) -> Optional[float]:
+        """
+        获取资金费率 (合约市场)
+        
+        Args:
+            symbol: 交易对
+            
+        Returns:
+            资金费率
+        """
+        # 尝试从Binance期货获取
+        try:
+            futures = ccxt.binance({
+                'enableRateLimit': True,
+                'options': {'defaultType': 'future'}
+            })
+            futures_symbol = symbol.replace('/', '')
+            funding = futures.fetch_funding_rate(futures_symbol)
+            return funding.get('fundingRate', 0)
+        except:
+            pass
+        
+        # 尝试从OKX获取
+        try:
+            okx = ccxt.okx({
+                'enableRateLimit': True,
+                'options': {'defaultType': 'swap'}
+            })
+            funding = okx.fetch_funding_rate(symbol)
+            return funding.get('fundingRate', 0)
+        except:
+            pass
+        
+        return None
+    
+    def get_status(self) -> Dict[str, Any]:
+        """获取交易所状态"""
+        status = {}
+        
+        for exchange_id in self.exchanges:
+            last_success = self._last_success.get(exchange_id)
+            error_count = self._error_count.get(exchange_id, 0)
+            
+            status[exchange_id] = {
+                'connected': True,
+                'last_success': last_success.isoformat() if last_success else None,
+                'error_count': error_count,
+                'is_primary': exchange_id == self.current_primary
+            }
+        
+        return status
 
 
-# 全局实例
-_market_stream = None
+# 全局管理器实例
+_exchange_manager: Optional[MultiExchangeManager] = None
 
 
-def get_market_stream() -> MarketDataStream:
-    """获取市场数据流实例"""
-    global _market_stream
-    if _market_stream is None:
-        _market_stream = MarketDataStream()
-    return _market_stream
+def get_exchange_manager() -> MultiExchangeManager:
+    """获取全局交易所管理器"""
+    global _exchange_manager
+    if _exchange_manager is None:
+        _exchange_manager = MultiExchangeManager()
+    return _exchange_manager
 
 
-def generate_simulated_data(symbol: str = "ETH/USDT", limit: int = 100, base_price: float = 3500) -> Tuple[pd.DataFrame, float]:
+def generate_simulated_data(symbol: str = "ETH/USDT", limit: int = 100, 
+                            base_price: Optional[float] = None) -> Tuple[pd.DataFrame, float]:
     """
     生成模拟数据（当真实数据不可用时）
     
@@ -107,6 +264,9 @@ def generate_simulated_data(symbol: str = "ETH/USDT", limit: int = 100, base_pri
     Returns:
         (DataFrame, 当前价格)
     """
+    if base_price is None:
+        base_price = BASE_PRICES.get(symbol, 100)
+    
     print(f"🎮 生成模拟数据 ({symbol})")
     
     np.random.seed(int(time.time()) % 10000)
@@ -115,17 +275,17 @@ def generate_simulated_data(symbol: str = "ETH/USDT", limit: int = 100, base_pri
     end_time = datetime.now()
     timestamps = pd.date_range(end=end_time, periods=limit, freq='5min')
     
-    # 生成价格序列（随机游走 + 趋势）
-    returns = np.random.normal(0.0001, 0.02, limit)  # 微小上涨趋势 + 波动
+    # 生成价格序列（随机游走 + 微小趋势）
+    returns = np.random.normal(0.0001, 0.015, limit)
     prices = base_price * np.cumprod(1 + returns)
     
     # 生成 OHLCV
     df = pd.DataFrame({
         'timestamp': timestamps,
         'open': prices,
-        'high': prices * (1 + np.abs(np.random.normal(0, 0.005, limit))),
-        'low': prices * (1 - np.abs(np.random.normal(0, 0.005, limit))),
-        'close': prices * (1 + np.random.normal(0, 0.002, limit)),
+        'high': prices * (1 + np.abs(np.random.normal(0, 0.003, limit))),
+        'low': prices * (1 - np.abs(np.random.normal(0, 0.003, limit))),
+        'close': prices * (1 + np.random.normal(0, 0.001, limit)),
         'volume': np.random.uniform(100, 1000, limit)
     })
     
@@ -134,7 +294,8 @@ def generate_simulated_data(symbol: str = "ETH/USDT", limit: int = 100, base_pri
     return df, current_price
 
 
-def get_realtime_eth_data(symbol: str = "ETH/USDT", timeframe: str = '5m', limit: int = 100, use_simulated: bool = False) -> Tuple[Optional[pd.DataFrame], float]:
+def get_realtime_eth_data(symbol: str = "ETH/USDT", timeframe: str = '5m', 
+                          limit: int = 100, use_simulated: bool = False) -> Tuple[Optional[pd.DataFrame], float]:
     """
     获取实时数据（支持降级到模拟数据）
     
@@ -147,25 +308,18 @@ def get_realtime_eth_data(symbol: str = "ETH/USDT", timeframe: str = '5m', limit
     Returns:
         (DataFrame, 当前价格) 或 (None, 0)
     """
-    # 基础价格映射（用于模拟）
-    base_prices = {
-        'ETH/USDT': 3500,
-        'BTC/USDT': 95000,
-        'SOL/USDT': 150,
-    }
-    
     if use_simulated:
-        return generate_simulated_data(symbol, limit, base_prices.get(symbol, 100))
+        return generate_simulated_data(symbol, limit)
     
     print(f"🔄 正在获取 {symbol} 实时数据...")
     
     # 尝试真实数据
-    stream = get_market_stream()
-    df, exchange_name = stream.get_ohlcv(symbol, timeframe, limit)
+    manager = get_exchange_manager()
+    df, exchange_name = manager.fetch_ohlcv(symbol, timeframe, limit)
     
     if df is not None:
         # 获取当前价格
-        ticker, _ = stream.get_ticker(symbol)
+        ticker, _ = manager.fetch_ticker(symbol)
         current_price = ticker['last'] if ticker else float(df['close'].iloc[-1])
         
         print(f"✅ 数据获取成功 | {exchange_name} | {symbol} 当前价格: ${current_price:,.2f}")
@@ -173,73 +327,61 @@ def get_realtime_eth_data(symbol: str = "ETH/USDT", timeframe: str = '5m', limit
     
     # 降级到模拟数据
     print(f"⚠️ 真实数据获取失败，使用模拟数据")
-    return generate_simulated_data(symbol, limit, base_prices.get(symbol, 100))
+    return generate_simulated_data(symbol, limit)
 
 
-def get_orderbook_data(symbol: str = "ETH/USDT", limit: int = 20) -> dict:
+def get_orderbook_data(symbol: str = "ETH/USDT", limit: int = 50) -> Dict[str, Any]:
     """获取订单簿数据"""
-    stream = get_market_stream()
+    manager = get_exchange_manager()
+    orderbook, exchange = manager.fetch_orderbook(symbol, limit)
     
-    try:
-        orderbook, exchange_name = stream.get_ticker(symbol)
+    if orderbook:
+        bids = orderbook.get('bids', [])
+        asks = orderbook.get('asks', [])
         
-        if orderbook:
-            # 模拟订单簿深度
-            current_price = orderbook.get('last', 3500)
-            spread = current_price * 0.0001  # 0.01% 点差
-            
+        if bids and asks:
             return {
                 'symbol': symbol,
-                'bid_price': current_price - spread/2,
-                'ask_price': current_price + spread/2,
-                'spread': spread,
-                'bid_volume': np.random.uniform(50, 200),
-                'ask_volume': np.random.uniform(50, 200),
-                'imbalance': np.random.uniform(-0.3, 0.3),
-                'timestamp': pd.Timestamp.now()
+                'exchange': exchange,
+                'bids': bids,
+                'asks': asks,
+                'bid_price': bids[0][0] if bids else 0,
+                'ask_price': asks[0][0] if asks else 0,
+                'spread': asks[0][0] - bids[0][0] if bids and asks else 0,
+                'timestamp': datetime.now()
             }
-    except Exception as e:
-        logger.warning(f"订单簿获取失败: {e}")
     
-    # 返回模拟数据
-    current_price = 3500
+    # 返回模拟订单簿
+    base_price = BASE_PRICES.get(symbol, 100)
     return {
         'symbol': symbol,
-        'bid_price': current_price * 0.9999,
-        'ask_price': current_price * 1.0001,
-        'spread': current_price * 0.0002,
-        'bid_volume': 100,
-        'ask_volume': 100,
-        'imbalance': 0,
-        'timestamp': pd.Timestamp.now()
+        'exchange': 'simulated',
+        'bids': [[base_price * 0.9999 - i * 0.001, 1] for i in range(limit)],
+        'asks': [[base_price * 1.0001 + i * 0.001, 1] for i in range(limit)],
+        'bid_price': base_price * 0.9999,
+        'ask_price': base_price * 1.0001,
+        'spread': base_price * 0.0002,
+        'timestamp': datetime.now()
     }
 
 
 def get_funding_rate(symbol: str = "ETH/USDT") -> float:
     """获取资金费率"""
-    try:
-        futures_exchange = ccxt.binance({
-            'enableRateLimit': True,
-            'options': {'defaultType': 'future'}
-        })
-        futures_symbol = symbol.replace('/', '')
-        funding = futures_exchange.fetch_funding_rate(futures_symbol)
-        return funding.get('fundingRate', 0)
-    except:
-        # 返回模拟值
-        return np.random.uniform(-0.0001, 0.0001)
+    manager = get_exchange_manager()
+    rate = manager.fetch_funding_rate(symbol)
+    return rate if rate is not None else np.random.uniform(-0.0001, 0.0001)
 
 
 # 测试
 if __name__ == "__main__":
     print("=" * 50)
-    print("ETH/USDT 数据测试")
+    print("多交易所数据测试")
     print("=" * 50)
     
-    # 测试真实数据
-    df, price = get_realtime_eth_data("ETH/USDT")
+    manager = get_exchange_manager()
+    print(f"\n交易所状态: {manager.get_status()}")
     
+    df, price = get_realtime_eth_data("ETH/USDT")
     if df is not None:
-        print(f"\n最新K线数据:")
+        print(f"\n价格: ${price:,.2f}")
         print(df.tail(3))
-        print(f"\n当前价格: ${price:,.2f}")

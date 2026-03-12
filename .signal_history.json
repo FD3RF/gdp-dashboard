@@ -1,0 +1,28 @@
+[
+  {
+    "timestamp": "2026-03-12T17:07:56.349556",
+    "symbol": "ETH/USDT",
+    "signal": "LONG",
+    "price": 3109.3399552052097,
+    "confidence": 63.7,
+    "stop_loss": 3009.02,
+    "take_profit": 3170.18,
+    "result": null,
+    "pnl_percent": null,
+    "exit_price": null,
+    "exit_time": null
+  },
+  {
+    "timestamp": "2026-03-12T17:09:19.981184",
+    "symbol": "ETH/USDT",
+    "signal": "SHORT",
+    "price": 3146.940784220441,
+    "confidence": 70.6,
+    "stop_loss": 3302.72,
+    "take_profit": 3084.99,
+    "result": null,
+    "pnl_percent": null,
+    "exit_price": null,
+    "exit_time": null
+  }
+]
