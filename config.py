@@ -10,9 +10,12 @@ AGENT_CONFIG = {
 
 # 风控参数
 RISK_CONFIG = {
-    "single_loss_limit": 0.02,  # 单笔最大亏损 2%
-    "daily_loss_limit": 0.05,   # 日内最大亏损 5%
-    "api_timeout": 500          # API 超时熔断
+    "single_loss_limit": 0.02,   # 单笔最大亏损 2%
+    "daily_loss_limit": 0.05,    # 日内最大亏损 5%
+    "max_position": 0.2,         # 最大仓位 20%
+    "max_leverage": 5,           # 最大杠杆
+    "api_timeout": 500,          # API 超时熔断
+    "black_swan_threshold": 0.1, # 黑天鹅阈值 10%
 }
 
 # 交易对配置

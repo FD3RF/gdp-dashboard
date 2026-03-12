@@ -56,7 +56,8 @@ class RiskShield:
     """
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self.config = config or {
+        # 默认配置
+        default_config = {
             'single_loss_limit': 0.02,   # 单笔最大亏损 2%
             'daily_loss_limit': 0.05,    # 日内最大亏损 5%
             'max_position': 0.2,         # 最大仓位 20%
@@ -64,6 +65,9 @@ class RiskShield:
             'api_timeout': 500,          # API 超时
             'black_swan_threshold': 0.1, # 黑天鹅阈值 10%
         }
+        
+        # 合并配置
+        self.config = {**default_config, **(config or {})}
         
         # 日内统计
         self.daily_pnl = 0.0
