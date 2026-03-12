@@ -104,7 +104,8 @@ def main():
     
     # 数据源状态
     if state.is_simulated:
-        st.warning("⚠️ 模拟数据模式")
+        st.warning("⚠️ 模拟数据模式 (真实API不可达)")
+        st.caption("提示: 网络限制导致无法访问交易所API，使用模拟数据进行演示")
     else:
         st.success(f"✅ {state.exchange} 真实数据")
     

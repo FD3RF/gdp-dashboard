@@ -3,6 +3,7 @@
 Layer 2: 数据采集层 - 全息感知
 ==============================
 多交易所冗余接入，防止单点故障
+支持 CoinGecko 免费API作为备用
 """
 
 import ccxt
@@ -13,6 +14,7 @@ from datetime import datetime, timedelta
 import time
 import logging
 import asyncio
+import requests
 from dataclasses import dataclass
 from enum import Enum
 
@@ -27,6 +29,7 @@ class DataSource(Enum):
     COINBASE = "coinbase"
     KRaken = "kraken"
     OKX = "okx"
+    COINGECKO = "coingecko"
     SIMULATED = "simulated"
 
 
@@ -46,6 +49,81 @@ class MarketData:
     funding_rate: Optional[float] = None
 
 
+class CoinGeckoAPI:
+    """
+    CoinGecko 免费API
+    
+    优点：
+    - 免费使用
+    - 无需API Key
+    - 全球可访问
+    """
+    
+    BASE_URL = "https://api.coingecko.com/api/v3"
+    
+    # 交易对映射
+    SYMBOL_MAP = {
+        'ETH/USDT': 'ethereum',
+        'BTC/USDT': 'bitcoin',
+        'SOL/USDT': 'solana',
+    }
+    
+    def __init__(self):
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+    
+    def get_price(self, symbol: str) -> Optional[float]:
+        """获取当前价格"""
+        coin_id = self.SYMBOL_MAP.get(symbol)
+        if not coin_id:
+            return None
+        
+        try:
+            url = f"{self.BASE_URL}/simple/price"
+            params = {
+                'ids': coin_id,
+                'vs_currencies': 'usd'
+            }
+            resp = self.session.get(url, params=params, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get(coin_id, {}).get('usd')
+        except Exception as e:
+            logger.debug(f"CoinGecko获取价格失败: {e}")
+        return None
+    
+    def get_ohlcv(self, symbol: str, days: int = 7) -> Optional[pd.DataFrame]:
+        """获取历史K线数据"""
+        coin_id = self.SYMBOL_MAP.get(symbol)
+        if not coin_id:
+            return None
+        
+        try:
+            url = f"{self.BASE_URL}/coins/{coin_id}/ohlc"
+            params = {'vs_currency': 'usd', 'days': days}
+            resp = self.session.get(url, params=params, timeout=15)
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close'])
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                df['volume'] = 0  # CoinGecko OHLC不包含成交量
+                
+                # 扩展到100根K线（用于技术指标计算）
+                if len(df) < 100:
+                    # 复制最后几根K线
+                    last_rows = df.tail(10)
+                    while len(df) < 100:
+                        df = pd.concat([df, last_rows], ignore_index=True)
+                
+                return df.tail(100)
+        except Exception as e:
+            logger.debug(f"CoinGecko获取K线失败: {e}")
+        return None
+
+
 class MultiExchangeManager:
     """
     多交易所管理器
@@ -55,13 +133,16 @@ class MultiExchangeManager:
     - 模块5: Tick数据抓取
     - 模块6: 订单簿数据
     - 自动故障转移
+    - CoinGecko备用
     """
     
     def __init__(self):
         self.exchanges: Dict[str, ccxt.Exchange] = {}
+        self.coingecko = CoinGeckoAPI()
         self.current_primary: Optional[str] = None
         self._last_success: Dict[str, datetime] = {}
         self._error_count: Dict[str, int] = {}
+        self._coingecko_available = True
         
         self._init_exchanges()
     
@@ -75,7 +156,7 @@ class MultiExchangeManager:
                 exchange_class = getattr(ccxt, exchange_id)
                 self.exchanges[exchange_id] = exchange_class({
                     'enableRateLimit': True,
-                    'timeout': 10000,
+                    'timeout': 5000,  # 5秒超时
                     'options': {
                         'defaultType': 'spot',
                     }
@@ -98,14 +179,15 @@ class MultiExchangeManager:
     
     def fetch_ticker(self, symbol: str) -> Tuple[Optional[Dict], str]:
         """
-        获取行情数据，自动切换交易所
+        获取行情数据，自动切换数据源
         
         Args:
             symbol: 交易对
             
         Returns:
-            (ticker数据, 交易所名称)
+            (ticker数据, 数据源名称)
         """
+        # 1. 先尝试CCXT交易所
         exchanges = self._get_sorted_exchanges()
         
         for exchange_id in exchanges:
@@ -123,7 +205,22 @@ class MultiExchangeManager:
                 logger.debug(f"{exchange_id} 获取行情失败: {e}")
                 continue
         
-        return None, "所有交易所失败"
+        # 2. 尝试CoinGecko
+        if self._coingecko_available:
+            try:
+                price = self.coingecko.get_price(symbol)
+                if price:
+                    return {
+                        'symbol': symbol,
+                        'last': price,
+                        'bid': price,
+                        'ask': price,
+                    }, 'coingecko'
+            except Exception as e:
+                logger.debug(f"CoinGecko获取行情失败: {e}")
+                self._coingecko_available = False
+        
+        return None, "所有数据源失败"
     
     def fetch_ohlcv(self, symbol: str, timeframe: str = '5m', 
                     limit: int = 100) -> Tuple[Optional[pd.DataFrame], str]:
@@ -136,8 +233,9 @@ class MultiExchangeManager:
             limit: 数量限制
             
         Returns:
-            (DataFrame, 交易所名称)
+            (DataFrame, 数据源名称)
         """
+        # 1. 尝试CCXT交易所
         exchanges = self._get_sorted_exchanges()
         
         for exchange_id in exchanges:
@@ -158,28 +256,27 @@ class MultiExchangeManager:
                 logger.debug(f"{exchange_id} 获取K线失败: {e}")
                 continue
         
-        return None, "所有交易所失败"
+        # 2. 尝试CoinGecko
+        if self._coingecko_available:
+            try:
+                df = self.coingecko.get_ohlcv(symbol, days=7)
+                if df is not None:
+                    df['exchange'] = 'coingecko'
+                    return df, 'coingecko'
+            except Exception as e:
+                logger.debug(f"CoinGecko获取K线失败: {e}")
+        
+        return None, "所有数据源失败"
     
     def fetch_orderbook(self, symbol: str, limit: int = 50) -> Tuple[Optional[Dict], str]:
-        """
-        获取订单簿数据
-        
-        Args:
-            symbol: 交易对
-            limit: 深度限制
-            
-        Returns:
-            (订单簿数据, 交易所名称)
-        """
+        """获取订单簿数据"""
         exchanges = self._get_sorted_exchanges()
         
         for exchange_id in exchanges:
             try:
                 exchange = self.exchanges[exchange_id]
                 orderbook = exchange.fetch_order_book(symbol, limit)
-                
                 return orderbook, exchange_id
-                
             except Exception as e:
                 logger.debug(f"{exchange_id} 获取订单簿失败: {e}")
                 continue
@@ -187,19 +284,11 @@ class MultiExchangeManager:
         return None, "所有交易所失败"
     
     def fetch_funding_rate(self, symbol: str) -> Optional[float]:
-        """
-        获取资金费率 (合约市场)
-        
-        Args:
-            symbol: 交易对
-            
-        Returns:
-            资金费率
-        """
-        # 尝试从Binance期货获取
+        """获取资金费率"""
         try:
             futures = ccxt.binance({
                 'enableRateLimit': True,
+                'timeout': 5000,
                 'options': {'defaultType': 'future'}
             })
             futures_symbol = symbol.replace('/', '')
@@ -208,21 +297,10 @@ class MultiExchangeManager:
         except:
             pass
         
-        # 尝试从OKX获取
-        try:
-            okx = ccxt.okx({
-                'enableRateLimit': True,
-                'options': {'defaultType': 'swap'}
-            })
-            funding = okx.fetch_funding_rate(symbol)
-            return funding.get('fundingRate', 0)
-        except:
-            pass
-        
         return None
     
     def get_status(self) -> Dict[str, Any]:
-        """获取交易所状态"""
+        """获取数据源状态"""
         status = {}
         
         for exchange_id in self.exchanges:
@@ -235,6 +313,10 @@ class MultiExchangeManager:
                 'error_count': error_count,
                 'is_primary': exchange_id == self.current_primary
             }
+        
+        status['coingecko'] = {
+            'available': self._coingecko_available,
+        }
         
         return status
 
@@ -254,15 +336,9 @@ def get_exchange_manager() -> MultiExchangeManager:
 def generate_simulated_data(symbol: str = "ETH/USDT", limit: int = 100, 
                             base_price: Optional[float] = None) -> Tuple[pd.DataFrame, float]:
     """
-    生成模拟数据（当真实数据不可用时）
+    生成模拟数据
     
-    Args:
-        symbol: 交易对
-        limit: K线数量
-        base_price: 基础价格
-        
-    Returns:
-        (DataFrame, 当前价格)
+    使用更真实的ETH价格范围
     """
     if base_price is None:
         base_price = BASE_PRICES.get(symbol, 100)
@@ -271,15 +347,12 @@ def generate_simulated_data(symbol: str = "ETH/USDT", limit: int = 100,
     
     np.random.seed(int(time.time()) % 10000)
     
-    # 生成时间序列
     end_time = datetime.now()
     timestamps = pd.date_range(end=end_time, periods=limit, freq='5min')
     
-    # 生成价格序列（随机游走 + 微小趋势）
     returns = np.random.normal(0.0001, 0.015, limit)
     prices = base_price * np.cumprod(1 + returns)
     
-    # 生成 OHLCV
     df = pd.DataFrame({
         'timestamp': timestamps,
         'open': prices,
@@ -297,32 +370,23 @@ def generate_simulated_data(symbol: str = "ETH/USDT", limit: int = 100,
 def get_realtime_eth_data(symbol: str = "ETH/USDT", timeframe: str = '5m', 
                           limit: int = 100, use_simulated: bool = False) -> Tuple[Optional[pd.DataFrame], float]:
     """
-    获取实时数据（支持降级到模拟数据）
+    获取实时数据
     
-    Args:
-        symbol: 交易对
-        timeframe: K线周期
-        limit: K线数量
-        use_simulated: 强制使用模拟数据
-        
-    Returns:
-        (DataFrame, 当前价格) 或 (None, 0)
+    优先级：CCXT交易所 > CoinGecko > 模拟数据
     """
     if use_simulated:
         return generate_simulated_data(symbol, limit)
     
     print(f"🔄 正在获取 {symbol} 实时数据...")
     
-    # 尝试真实数据
     manager = get_exchange_manager()
-    df, exchange_name = manager.fetch_ohlcv(symbol, timeframe, limit)
+    df, source = manager.fetch_ohlcv(symbol, timeframe, limit)
     
     if df is not None:
-        # 获取当前价格
         ticker, _ = manager.fetch_ticker(symbol)
         current_price = ticker['last'] if ticker else float(df['close'].iloc[-1])
         
-        print(f"✅ 数据获取成功 | {exchange_name} | {symbol} 当前价格: ${current_price:,.2f}")
+        print(f"✅ 数据获取成功 | {source} | {symbol} 当前价格: ${current_price:,.2f}")
         return df, current_price
     
     # 降级到模拟数据
@@ -333,7 +397,7 @@ def get_realtime_eth_data(symbol: str = "ETH/USDT", timeframe: str = '5m',
 def get_orderbook_data(symbol: str = "ETH/USDT", limit: int = 50) -> Dict[str, Any]:
     """获取订单簿数据"""
     manager = get_exchange_manager()
-    orderbook, exchange = manager.fetch_orderbook(symbol, limit)
+    orderbook, source = manager.fetch_orderbook(symbol, limit)
     
     if orderbook:
         bids = orderbook.get('bids', [])
@@ -342,7 +406,7 @@ def get_orderbook_data(symbol: str = "ETH/USDT", limit: int = 50) -> Dict[str, A
         if bids and asks:
             return {
                 'symbol': symbol,
-                'exchange': exchange,
+                'exchange': source,
                 'bids': bids,
                 'asks': asks,
                 'bid_price': bids[0][0] if bids else 0,
@@ -379,7 +443,7 @@ if __name__ == "__main__":
     print("=" * 50)
     
     manager = get_exchange_manager()
-    print(f"\n交易所状态: {manager.get_status()}")
+    print(f"\n数据源状态: {manager.get_status()}")
     
     df, price = get_realtime_eth_data("ETH/USDT")
     if df is not None:

@@ -144,9 +144,9 @@ SIGNAL_TRACKING = {
     "min_samples": 10,
 }
 
-# 基础价格映射
+# 基础价格映射 (更新为更准确的当前价格)
 BASE_PRICES = {
-    'ETH/USDT': 3500,
-    'BTC/USDT': 95000,
-    'SOL/USDT': 150,
+    'ETH/USDT': 3200,  # ETH当前价格约$3000-3500
+    'BTC/USDT': 85000,  # BTC当前价格约$80,000-90,000
+    'SOL/USDT': 140,   # SOL当前价格约$120-160
 }
