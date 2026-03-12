@@ -239,6 +239,10 @@ def get_settings() -> Settings:
     return Settings()
 
 
+# Global settings instance for easy import
+settings = get_settings()
+
+
 def load_config(config_path: Optional[str] = None) -> Settings:
     """
     Load configuration from file or environment.
@@ -257,3 +261,7 @@ def load_config(config_path: Optional[str] = None) -> Settings:
             return Settings.from_json(config_path)
     
     return Settings()
+
+
+# Global settings instance for easy import
+settings = get_settings()

@@ -5,6 +5,14 @@ AI Quant Trading System - Streamlit Dashboard
 Real-time visualization dashboard for the AI Quant Trading System.
 """
 
+import sys
+from pathlib import Path
+
+# Add dashboard directory to path for component imports
+DASHBOARD_DIR = Path(__file__).parent
+if str(DASHBOARD_DIR) not in sys.path:
+    sys.path.insert(0, str(DASHBOARD_DIR))
+
 import asyncio
 import time
 from datetime import datetime, timedelta
@@ -376,7 +384,7 @@ with tab1:
         st.subheader(f"Price Chart - {symbol}")
         
         # Create candlestick chart
-        from components.charts import PriceChart
+        from dashboard.components.charts import PriceChart
         
         fig = PriceChart.create(data['ohlcv'], symbol)
         st.plotly_chart(fig, use_container_width=True)
@@ -410,7 +418,7 @@ with tab2:
     with col1:
         st.subheader("Equity Curve")
         
-        from components.charts import PerformanceChart
+        from dashboard.components.charts import PerformanceChart
         
         fig = PerformanceChart.create(data['equity_curve'])
         st.plotly_chart(fig, use_container_width=True)
@@ -418,7 +426,7 @@ with tab2:
         # Drawdown chart
         st.subheader("Drawdown Analysis")
         
-        from components.charts import DrawdownChart
+        from dashboard.components.charts import DrawdownChart
         
         fig = DrawdownChart.create(data['equity_curve'])
         st.plotly_chart(fig, use_container_width=True)
@@ -437,7 +445,7 @@ with tab2:
         st.divider()
         
         # Risk gauge
-        from components.charts import RiskGauge
+        from dashboard.components.charts import RiskGauge
         
         fig = RiskGauge.create(
             value=data['risk']['risk_score'],
@@ -506,7 +514,7 @@ with tab3:
 # Tab 4: Risk Management
 # ------------------------------------------------------------
 with tab4:
-    from components.risk_panel import RiskPanel, render_risk_limits
+    from dashboard.components.risk_panel import RiskPanel, render_risk_limits
     
     risk_panel = RiskPanel()
     risk_panel.render(data['risk'])
@@ -535,7 +543,7 @@ with tab4:
 # Tab 5: AI Agents
 # ------------------------------------------------------------
 with tab5:
-    from components.agent_monitor import AgentMonitor
+    from dashboard.components.agent_monitor import AgentMonitor
     
     agent_monitor = AgentMonitor()
     agent_monitor.render(data['agents'])

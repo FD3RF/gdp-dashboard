@@ -6,10 +6,11 @@ import json
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from core.base import BaseModule
 from agents.base_agent import BaseAgent, AgentTask
 
 
-class RiskAgent(BaseModule):
+class RiskAgent(BaseAgent):
     """
     Risk Agent responsible for:
     - Analyzing trade risks

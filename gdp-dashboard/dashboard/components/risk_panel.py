@@ -5,12 +5,20 @@ Risk Panel Component
 Risk management monitoring panel.
 """
 
+import sys
+from pathlib import Path
+
+# Add dashboard directory to path for component imports
+DASHBOARD_DIR = Path(__file__).parent.parent
+if str(DASHBOARD_DIR) not in sys.path:
+    sys.path.insert(0, str(DASHBOARD_DIR))
+
 import streamlit as st
 import pandas as pd
 from typing import Dict, List, Any, Optional
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from components.charts import RiskGauge
+from dashboard.components.charts import RiskGauge
 
 
 class RiskPanel:
