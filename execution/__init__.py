@@ -1,19 +1,28 @@
+# execution/__init__.py
 """
-Execution module for AI Quant Trading System.
+Oracle AI Agent - 执行模块
 """
 
-from .order_manager import OrderManager
-from .smart_router import SmartOrderRouter
-from .twap_engine import TWAPEngine
-from .vwap_engine import VWAPEngine
-from .liquidity_scanner import LiquidityScanner
-from .exchange_adapter import ExchangeAdapter
+from .strategy_matrix import (
+    StrategyMatrix,
+    StrategyType,
+    StrategySignal,
+    BaseStrategy,
+)
+from .risk_shield import (
+    RiskShield,
+    RiskLevel,
+    RiskCheckResult,
+    PositionInfo,
+)
 
 __all__ = [
-    'OrderManager',
-    'SmartOrderRouter',
-    'TWAPEngine',
-    'VWAPEngine',
-    'LiquidityScanner',
-    'ExchangeAdapter'
+    'StrategyMatrix',
+    'StrategyType',
+    'StrategySignal',
+    'BaseStrategy',
+    'RiskShield',
+    'RiskLevel',
+    'RiskCheckResult',
+    'PositionInfo',
 ]
