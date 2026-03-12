@@ -12,15 +12,36 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
 from datetime import datetime
+from dataclasses import dataclass
+from typing import Dict, Any, Optional
 
-# 导入主程序
-from main import run_system, SystemState
-from analysis.decision_maker import Signal
+# 导入数据模块
+from data.market_stream import get_realtime_eth_data
+from data.kline_builder import calculate_indicators
+from ai.probability_model import calculate_probabilities
+from analysis.decision_maker import make_decision, Signal
+from analysis.trade_plan import generate_trade_plan
+from analysis.risk_monitor import risk_warning
+
+
+@dataclass
+class SystemState:
+    """系统状态"""
+    symbol: str
+    timestamp: str
+    price: float
+    indicators: Dict[str, Any]
+    probabilities: Dict[str, float]
+    signal: Signal
+    plan: Any
+    risk: Any
+    orderbook: Dict[str, Any]
+    is_simulated: bool = False
 
 
 # 页面配置
 st.set_page_config(
-    page_title="ETH AI Agent (Live)",
+    page_title="ETH AI Agent",
     page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -94,17 +115,76 @@ def create_price_chart(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optional[SystemState]:
+    """运行完整分析流程"""
+    # 1. 获取数据
+    df, current_price = get_realtime_eth_data(symbol, use_simulated=use_simulated)
+    
+    if df is None:
+        return None
+    
+    # 2. 计算技术指标
+    df = calculate_indicators(df)
+    
+    # 指标提取
+    latest = df.iloc[-1] if len(df) > 0 else {}
+    indicators = {
+        'close': latest.get('close', current_price),
+        'rsi14': latest.get('rsi14', 50),
+        'ma5': latest.get('ma5', current_price),
+        'ma20': latest.get('ma20', current_price),
+        'macd': latest.get('macd', 0),
+        'bb_position': latest.get('bb_position', 0.5),
+        'volume_ratio': latest.get('volume_ratio', 1),
+        'price_change_5m': latest.get('price_change_5m', 0),
+    }
+
+    # 3. AI 计算概率
+    probs = calculate_probabilities(df)
+    
+    # 4. 生成最终信号
+    decision = make_decision(probs)
+
+    # 5. 生成交易计划
+    plan = generate_trade_plan(df, decision.signal)
+
+    # 6. 风险监控
+    risk = risk_warning(df)
+    
+    # 检测是否模拟数据
+    is_simulated = use_simulated or (symbol == "ETH/USDT" and 3000 < current_price < 4000)
+    
+    return SystemState(
+        symbol=symbol,
+        timestamp=str(df['timestamp'].iloc[-1]) if len(df) > 0 else str(datetime.now()),
+        price=current_price,
+        indicators=indicators,
+        probabilities=probs,
+        signal=decision.signal,
+        plan=plan,
+        risk=risk,
+        orderbook={},
+        is_simulated=is_simulated
+    )
+
+
 def main():
     """主函数"""
     # 标题
-    st.title("🧠 ETH/USDT 5分钟 AI 盯盘终端 (真实数据版)")
+    st.title("🧠 ETH/USDT 5分钟 AI 盯盘终端")
     
     # 侧边栏配置
     with st.sidebar:
         st.header("⚙️ 设置")
         symbol = st.selectbox("交易对", ["ETH/USDT", "BTC/USDT", "SOL/USDT"])
-        auto_refresh = st.checkbox("自动刷新", value=True)
-        refresh_interval = st.slider("刷新间隔(秒)", 5, 60, 10)
+        
+        # 数据源选择
+        data_source = st.radio(
+            "数据源",
+            ["自动 (优先真实数据)", "模拟数据"],
+            help="真实数据不可用时自动切换模拟数据"
+        )
+        use_simulated = data_source == "模拟数据"
         
         st.divider()
         st.header("📊 风险配置")
@@ -112,24 +192,27 @@ def main():
         max_position = st.slider("最大仓位(%)", 10, 50, 30)
     
     # 获取数据
-    with st.spinner("🔄 正在获取实时数据..."):
-        state = run_system(symbol)
+    with st.spinner("🔄 正在获取数据..."):
+        state = run_system(symbol, use_simulated=use_simulated)
     
     if state is None:
-        st.error("❌ 获取数据失败，请检查网络连接")
+        st.error("❌ 获取数据失败")
+        if st.button("🔄 重试"):
+            st.rerun()
         st.stop()
+    
+    # 显示数据源状态
+    if state.is_simulated:
+        st.warning("⚠️ 当前使用模拟数据")
+    else:
+        st.success("✅ 真实数据连接成功")
     
     # 第一行：核心数据
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         delta = f"{state.indicators.get('price_change_5m', 0) * 100:.2f}%"
-        st.metric(
-            "当前价格",
-            f"${state.price:,.2f}",
-            delta=delta,
-            delta_color="normal"
-        )
+        st.metric("当前价格", f"${state.price:,.2f}", delta=delta)
     
     with col2:
         signal_emoji = "🟢" if state.signal == Signal.LONG else "🔴" if state.signal == Signal.SHORT else "⚪"
@@ -180,11 +263,9 @@ def main():
         with ind_col1:
             st.metric("RSI(14)", f"{indicators.get('rsi14', 50):.1f}")
             st.metric("MA5", f"${indicators.get('ma5', 0):,.0f}")
-            st.metric("MA20", f"${indicators.get('ma20', 0):,.0f}")
         
         with ind_col2:
             st.metric("MACD", f"{indicators.get('macd', 0):.2f}")
-            st.metric("BB位置", f"{indicators.get('bb_position', 0.5):.2f}")
             st.metric("量比", f"{indicators.get('volume_ratio', 1):.2f}")
     
     st.divider()
@@ -207,37 +288,29 @@ def main():
         with plan_col4:
             st.metric("风险收益比", f"{state.plan.risk_reward:.2f}")
         
-        st.info(f"💡 建议仓位: {state.plan.position_size:.1f}% | 杠杆: {state.plan.leverage}x")
+        st.info(f"💡 建议仓位: {state.plan.position_size:.1f}%")
     else:
         st.warning("当前建议观望，无交易计划")
     
     # 风险提示
     if state.risk.warnings:
         st.subheader("⚠️ 风险提示")
-        for warning in state.risk.warnings:
+        for warning in state.risk.warnings[:3]:
             st.warning(warning)
-        
-        if state.risk.suggestions:
-            st.subheader("💡 操作建议")
-            for suggestion in state.risk.suggestions:
-                st.info(f"• {suggestion}")
     
-    # K线图 (需要重新获取完整数据)
+    # K线图
     st.divider()
     st.subheader("📈 K线图")
     
-    # 获取K线数据
-    from data.market_stream import get_realtime_eth_data
-    from data.kline_builder import calculate_indicators
-    
-    df, _ = get_realtime_eth_data(symbol, limit=100)
+    df, _ = get_realtime_eth_data(symbol, limit=100, use_simulated=use_simulated)
     if df is not None:
         df = calculate_indicators(df)
         fig = create_price_chart(df)
         st.plotly_chart(fig, use_container_width=True)
     
     # 底部信息
-    st.caption(f"最后更新: {state.timestamp} | 数据来源: Binance")
+    data_source_text = "模拟数据" if state.is_simulated else "Binance API"
+    st.caption(f"最后更新: {state.timestamp} | 数据来源: {data_source_text}")
 
 
 if __name__ == "__main__":

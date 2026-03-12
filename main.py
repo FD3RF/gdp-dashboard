@@ -40,18 +40,19 @@ class SystemState:
     orderbook: Dict[str, Any]
 
 
-def run_system(symbol: str = "ETH/USDT") -> Optional[SystemState]:
+def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optional[SystemState]:
     """
     运行完整分析流程
     
     Args:
         symbol: 交易对，默认 ETH/USDT
+        use_simulated: 是否使用模拟数据
         
     Returns:
         SystemState 或 None
     """
-    # 1. 获取真实数据
-    df, current_price = get_realtime_eth_data(symbol)
+    # 1. 获取数据
+    df, current_price = get_realtime_eth_data(symbol, use_simulated=use_simulated)
     
     if df is None:
         return None
