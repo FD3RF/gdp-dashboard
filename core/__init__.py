@@ -1,6 +1,6 @@
 """
 Core module for AI Quant Trading System.
-Provides base classes, exceptions, and utilities.
+Provides base classes, exceptions, utilities, memory, and state management.
 """
 
 from .base import BaseModule, Singleton
@@ -29,9 +29,15 @@ from .utils import (
     calculate_pnl
 )
 
+# New modules for improved architecture
+from .memory import MemoryStore, MemoryEntry, MemoryType
+from .project_state import ProjectStateManager, Task, TaskStatus, ProjectPhase
+
 __all__ = [
+    # Base
     'BaseModule',
     'Singleton',
+    # Exceptions
     'QuantSystemException',
     'DataException',
     'StrategyException',
@@ -39,15 +45,26 @@ __all__ = [
     'ExecutionException',
     'AgentException',
     'ConfigurationException',
+    # Constants
     'TimeFrame',
     'OrderSide',
     'OrderType',
     'PositionSide',
     'StrategyStatus',
     'RiskLevel',
+    # Utils
     'setup_logger',
     'async_retry',
     'timing_decorator',
     'validate_symbol',
-    'calculate_pnl'
+    'calculate_pnl',
+    # Memory (v2)
+    'MemoryStore',
+    'MemoryEntry',
+    'MemoryType',
+    # Project State (v2)
+    'ProjectStateManager',
+    'Task',
+    'TaskStatus',
+    'ProjectPhase'
 ]
