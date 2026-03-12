@@ -177,7 +177,8 @@ class StatisticalArbitrageStrategy(BaseStrategy):
                 try:
                     beta = np.linalg.lstsq(X, y, rcond=None)[0]
                     self._hedge_ratio[pair_key] = beta[0]
-                except:
+                except (np.linalg.LinAlgError, ValueError) as e:
+                    self.logger.warning(f"Failed to calculate hedge ratio for {pair_key}: {e}")
                     self._hedge_ratio[pair_key] = 1.0
             
             hedge_ratio = self._hedge_ratio[pair_key]

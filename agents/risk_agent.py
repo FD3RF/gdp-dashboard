@@ -112,7 +112,8 @@ Respond with JSON."""
             response = await self.generate_response(prompt)
             json_str = response[response.find('{'):response.rfind('}')+1]
             ai_assessment = json.loads(json_str)
-        except:
+        except (json.JSONDecodeError, ValueError, AttributeError) as e:
+            self.logger.warning(f"Failed to parse risk assessment JSON: {e}")
             ai_assessment = {
                 'risk_level': risk_level,
                 'risks': risks,

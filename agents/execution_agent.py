@@ -174,7 +174,8 @@ Respond with JSON:
         try:
             json_str = response[response.find('{'):response.rfind('}')+1]
             recommendation = json.loads(json_str)
-        except:
+        except (json.JSONDecodeError, ValueError, AttributeError) as e:
+            self.logger.warning(f"Failed to parse execution recommendation JSON: {e}")
             recommendation = {
                 'algorithm': 'market',
                 'split_orders': False,

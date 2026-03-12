@@ -93,7 +93,7 @@ Respond with JSON:
         try:
             json_str = response[response.find('{'):response.rfind('}')+1]
             analysis = json.loads(json_str)
-        except:
+        except (json.JSONDecodeError, ValueError, AttributeError) as e:
             analysis = {
                 'overall_assessment': 'unknown',
                 'error': 'Could not parse analysis'
@@ -143,7 +143,7 @@ Provide specific, actionable improvements:
         try:
             json_str = response[response.find('{'):response.rfind('}')+1]
             improvements = json.loads(json_str)
-        except:
+        except (json.JSONDecodeError, ValueError, AttributeError) as e:
             improvements = {'improvements': [], 'error': 'Could not parse'}
         
         return improvements
@@ -184,7 +184,7 @@ Respond with JSON:
         try:
             json_str = response[response.find('{'):response.rfind('}')+1]
             learnings = json.loads(json_str)
-        except:
+        except (json.JSONDecodeError, ValueError, AttributeError) as e:
             learnings = {'root_cause': 'unknown', 'error': 'Could not analyze'}
         
         # Store in vector memory
@@ -226,7 +226,7 @@ Respond with JSON:
         try:
             json_str = response[response.find('{'):response.rfind('}')+1]
             refactoring = json.loads(json_str)
-        except:
+        except (json.JSONDecodeError, ValueError, AttributeError) as e:
             refactoring = {'error': 'Could not parse refactoring'}
         
         return refactoring

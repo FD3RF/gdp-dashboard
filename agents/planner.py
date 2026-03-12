@@ -91,7 +91,8 @@ Respond with JSON containing:
             # Extract JSON from response
             json_str = response[response.find('{'):response.rfind('}')+1]
             analysis = json.loads(json_str)
-        except:
+        except (json.JSONDecodeError, ValueError, AttributeError) as e:
+            self.logger.warning(f"Failed to parse analysis JSON: {e}, using default")
             analysis = {
                 'intent': request,
                 'complexity': 'medium',
@@ -136,7 +137,8 @@ Create a plan with specific steps. Respond with JSON:
         try:
             json_str = response[response.find('{'):response.rfind('}')+1]
             plan = json.loads(json_str)
-        except:
+        except (json.JSONDecodeError, ValueError, AttributeError) as e:
+            self.logger.warning(f"Failed to parse plan JSON: {e}, creating default plan")
             # Create default plan
             plan = {
                 'plan_id': f"plan_{datetime.now().strftime('%Y%m%d%H%M%S')}",
@@ -255,7 +257,8 @@ Create a hierarchical decomposition (max depth {max_depth}). Respond with JSON:
             json_str = response[response.find('{'):response.rfind('}')+1]
             decomposition = json.loads(json_str)
             return decomposition.get('subtasks', [])
-        except:
+        except (json.JSONDecodeError, ValueError, AttributeError) as e:
+            self.logger.warning(f"Failed to parse decomposition JSON: {e}")
             return []
     
     def get_plan_history(self) -> List[Dict]:

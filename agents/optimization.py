@@ -88,7 +88,8 @@ Respond with JSON:
         try:
             json_str = response[response.find('{'):response.rfind('}')+1]
             ai_recommendation = json.loads(json_str)
-        except:
+        except (json.JSONDecodeError, ValueError, AttributeError) as e:
+            self.logger.warning(f"Failed to parse optimization recommendation JSON: {e}")
             ai_recommendation = {
                 'recommended_params': {},
                 'rationale': 'Could not parse recommendation'

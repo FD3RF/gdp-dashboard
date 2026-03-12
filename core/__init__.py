@@ -32,6 +32,15 @@ from .utils import (
 # New modules for improved architecture
 from .memory import MemoryStore, MemoryEntry, MemoryType
 from .project_state import ProjectStateManager, Task, TaskStatus, ProjectPhase
+from .security import (
+    SecurityConfig,
+    safe_json_parse,
+    sanitize_for_log,
+    generate_secure_token,
+    validate_file_path,
+    mask_api_key,
+    safe_execute
+)
 
 __all__ = [
     # Base
