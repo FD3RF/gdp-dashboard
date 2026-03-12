@@ -1,8 +1,19 @@
-torch
-pandas
-numpy
-streamlit==1.32.0
-plotly
-ccxt
-requests
-altair==5.2.0
+# Oracle AI Agent Dependencies
+# Python 3.14 compatible versions
+
+# Core
+numpy>=2.0.0
+pandas>=2.0.0
+torch>=2.5.0
+
+# Visualization
+streamlit>=1.44.0
+plotly>=5.0.0
+
+# Exchange
+ccxt>=4.0.0
+requests>=2.32.0
+
+# Data processing
+python-dateutil>=2.9.0
+pytz>=2024.1
