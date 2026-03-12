@@ -3,26 +3,29 @@
 Oracle AI Agent - 执行模块
 """
 
-from .strategy_matrix import (
-    StrategyMatrix,
-    StrategyType,
-    StrategySignal,
-    BaseStrategy,
-)
+# 延迟导入torch相关模块，避免启动时CUDA加载问题
 from .risk_shield import (
     RiskShield,
     RiskLevel,
     RiskCheckResult,
     PositionInfo,
 )
+from .performance_calculator import (
+    PrecisionCalculator,
+    RealtimePerformanceTracker,
+)
 
 __all__ = [
-    'StrategyMatrix',
-    'StrategyType',
-    'StrategySignal',
-    'BaseStrategy',
     'RiskShield',
     'RiskLevel',
     'RiskCheckResult',
     'PositionInfo',
+    'PrecisionCalculator',
+    'RealtimePerformanceTracker',
 ]
+
+# 延迟导入策略模块
+def get_strategy_matrix():
+    """延迟导入策略矩阵"""
+    from .strategy_matrix import StrategyMatrix
+    return StrategyMatrix
