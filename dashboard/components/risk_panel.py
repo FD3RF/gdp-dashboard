@@ -1,14 +1,14 @@
 """
-Risk Panel Component
-====================
+风险管理面板组件
+=================
 
-Risk management monitoring panel.
+风险管理监控面板，全中文界面。
 """
 
 import sys
 from pathlib import Path
 
-# Add dashboard directory to path for component imports
+# 添加 dashboard 目录到路径
 DASHBOARD_DIR = Path(__file__).parent.parent
 if str(DASHBOARD_DIR) not in sys.path:
     sys.path.insert(0, str(DASHBOARD_DIR))
@@ -21,9 +21,51 @@ from plotly.subplots import make_subplots
 from components.charts import RiskGauge
 
 
+# 中文标签
+LABELS = {
+    'risk_management': '⚠️ 风险管理',
+    'no_risk_data': '暂无风险数据',
+    'metrics': '风险指标',
+    'positions': '持仓风险',
+    'current_drawdown': '当前回撤',
+    'limit': '限制',
+    'total_exposure': '总敞口',
+    'leverage': '杠杆倍数',
+    'max': '最大',
+    'open_positions': '持仓数量',
+    'daily_pnl': '日内盈亏',
+    'margin_used': '已用保证金',
+    'free_margin': '可用保证金',
+    'margin_level': '保证金率',
+    'position_risk': '持仓风险分析',
+    'no_positions': '暂无持仓',
+    'symbol': '交易对',
+    'size': '数量',
+    'value': '价值',
+    'risk_pct': '风险比例',
+    'stop_loss': '止损价',
+    'unrealized_pnl': '未实现盈亏',
+    'exposure_distribution': '持仓敞口分布',
+    'risk_alerts': '⚠️ 风险警报',
+    'no_alerts': '无活动风险警报',
+    'account_summary': '💰 账户概览',
+    'total_balance': '总余额',
+    'available_balance': '可用余额',
+    'realized_pnl': '已实现盈亏',
+    'risk_limits': '🛡️ 风险限制',
+    'max_position_size': '最大持仓比例',
+    'max_drawdown': '最大回撤',
+    'max_leverage': '最大杠杆',
+    'daily_loss': '日内亏损',
+    'current': '当前',
+    'status': '状态',
+    'overall_risk': '整体风险',
+}
+
+
 class RiskPanel:
     """
-    Risk management monitoring panel.
+    风险管理监控面板
     """
     
     def __init__(self, api_base: str = "http://localhost:8000"):
@@ -31,22 +73,22 @@ class RiskPanel:
     
     def render(self, risk_data: Dict[str, Any]) -> None:
         """
-        Render the risk panel.
+        渲染风险面板
         
         Args:
-            risk_data: Risk metrics and status
+            risk_data: 风险指标和状态
         """
-        st.header("⚠️ Risk Management")
+        st.header(LABELS['risk_management'])
         
         if not risk_data:
-            st.warning("No risk data available")
+            st.warning(LABELS['no_risk_data'])
             return
         
-        # Overall risk level
+        # 整体风险等级
         self._render_risk_level(risk_data)
         
-        # Risk metrics
-        col1, col2 = st.tabs(["Metrics", "Positions"])
+        # 风险指标
+        col1, col2 = st.tabs([LABELS['metrics'], LABELS['positions']])
         
         with col1:
             self._render_metrics(risk_data)
@@ -54,45 +96,45 @@ class RiskPanel:
         with col2:
             self._render_positions(risk_data)
         
-        # Alerts
+        # 警报
         if 'alerts' in risk_data:
             self._render_alerts(risk_data['alerts'])
     
     def _render_risk_level(self, risk_data: Dict[str, Any]) -> None:
-        """Render overall risk level gauge."""
+        """渲染整体风险等级仪表"""
         risk_score = risk_data.get('risk_score', 50)
-        overall_level = risk_data.get('overall_risk_level', 'unknown')
+        overall_level = risk_data.get('overall_risk_level', '未知')
         
         col1, col2, col3 = st.columns([1, 2, 1])
         
         with col2:
             fig = RiskGauge.create(
                 value=risk_score,
-                title=f"Overall Risk: {overall_level.upper()}"
+                title=f"{LABELS['overall_risk']}: {overall_level}"
             )
             st.plotly_chart(fig, use_container_width=True)
     
     def _render_metrics(self, risk_data: Dict[str, Any]) -> None:
-        """Render risk metrics."""
-        st.subheader("Risk Metrics")
+        """渲染风险指标"""
+        st.subheader(LABELS['metrics'])
         
-        # Main metrics row
+        # 主要指标行
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             drawdown = risk_data.get('drawdown', 0)
             max_dd = risk_data.get('max_drawdown_limit', 0.15)
             st.metric(
-                "Current Drawdown",
+                LABELS['current_drawdown'],
                 f"{drawdown * 100:.2f}%",
-                delta=f"Limit: {max_dd * 100:.1f}%",
+                delta=f"{LABELS['limit']}: {max_dd * 100:.1f}%",
                 delta_color="inverse"
             )
         
         with col2:
             exposure = risk_data.get('total_exposure', 0)
             st.metric(
-                "Total Exposure",
+                LABELS['total_exposure'],
                 f"{exposure * 100:.1f}%"
             )
         
@@ -100,83 +142,82 @@ class RiskPanel:
             leverage = risk_data.get('leverage', 1.0)
             max_lev = risk_data.get('max_leverage', 3.0)
             st.metric(
-                "Leverage",
+                LABELS['leverage'],
                 f"{leverage:.2f}x",
-                delta=f"Max: {max_lev:.1f}x",
+                delta=f"{LABELS['max']}: {max_lev:.1f}x",
                 delta_color="inverse" if leverage > max_lev * 0.8 else "normal"
             )
         
         with col4:
             position_count = risk_data.get('position_count', 0)
             st.metric(
-                "Open Positions",
+                LABELS['open_positions'],
                 position_count
             )
         
-        # Secondary metrics
+        # 次要指标
         st.divider()
         
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
             daily_pnl = risk_data.get('daily_pnl', 0)
-            daily_limit = risk_data.get('daily_loss_limit', 0.05)
             st.metric(
-                "Daily PnL",
+                LABELS['daily_pnl'],
                 f"${daily_pnl:,.2f}"
             )
         
         with col2:
             margin_used = risk_data.get('margin_used', 0)
             st.metric(
-                "Margin Used",
+                LABELS['margin_used'],
                 f"${margin_used:,.2f}"
             )
         
         with col3:
             free_margin = risk_data.get('free_margin', 0)
             st.metric(
-                "Free Margin",
+                LABELS['free_margin'],
                 f"${free_margin:,.2f}"
             )
         
         with col4:
             margin_level = risk_data.get('margin_level', 100)
             st.metric(
-                "Margin Level",
+                LABELS['margin_level'],
                 f"{margin_level:.1f}%"
             )
     
     def _render_positions(self, risk_data: Dict[str, Any]) -> None:
-        """Render position-level risk."""
-        st.subheader("Position Risk")
+        """渲染持仓风险"""
+        st.subheader(LABELS['position_risk'])
         
         positions = risk_data.get('positions', {})
         
         if not positions:
-            st.info("No open positions")
+            st.info(LABELS['no_positions'])
             return
         
-        # Create position risk table
+        # 创建持仓风险表格
         data = []
         for symbol, pos in positions.items():
             data.append({
-                'Symbol': symbol,
-                'Size': pos.get('quantity', 0),
-                'Value': f"${pos.get('value', 0):,.2f}",
-                'Risk %': f"{pos.get('risk_pct', 0) * 100:.2f}%",
-                'Stop Loss': f"${pos.get('stop_loss', 0):,.2f}",
-                'Unrealized PnL': f"${pos.get('unrealized_pnl', 0):,.2f}"
+                LABELS['symbol']: symbol,
+                LABELS['size']: pos.get('quantity', 0),
+                LABELS['value']: f"${pos.get('value', 0):,.2f}",
+                LABELS['risk_pct']: f"{pos.get('risk_pct', 0) * 100:.2f}%",
+                LABELS['stop_loss']: f"${pos.get('stop_loss', 0):,.2f}",
+                LABELS['unrealized_pnl']: f"${pos.get('unrealized_pnl', 0):,.2f}"
             })
         
         df = pd.DataFrame(data)
         st.dataframe(df, use_container_width=True, hide_index=True)
         
-        # Position exposure pie chart
+        # 持仓敞口饼图
         self._render_exposure_chart(positions)
     
     def _render_exposure_chart(self, positions: Dict[str, Any]) -> None:
-        """Render position exposure pie chart."""
+        """渲染持仓敞口饼图"""
         if not positions:
             return
         
@@ -190,13 +231,14 @@ class RiskPanel:
                     values=values,
                     hole=0.4,
                     textinfo='label+percent',
-                    textposition='outside'
+                    textposition='outside',
+                    textfont=dict(size=12)
                 )
             ]
         )
         
         fig.update_layout(
-            title="Position Exposure Distribution",
+            title=LABELS['exposure_distribution'],
             template='plotly_dark',
             height=300
         )
@@ -204,93 +246,93 @@ class RiskPanel:
         st.plotly_chart(fig, use_container_width=True)
     
     def _render_alerts(self, alerts: List[Dict[str, Any]]) -> None:
-        """Render risk alerts."""
-        st.subheader("⚠️ Risk Alerts")
+        """渲染风险警报"""
+        st.subheader(LABELS['risk_alerts'])
         
         if not alerts:
-            st.success("No active risk alerts")
+            st.success(LABELS['no_alerts'])
             return
         
-        for alert in alerts[-10:]:  # Show last 10 alerts
+        for alert in alerts[-10:]:  # 显示最近10条警报
             level = alert.get('level', 'info')
             
             if level == 'critical':
-                st.error(f"🔴 {alert.get('message', 'Unknown alert')}")
+                st.error(f"🔴 {alert.get('message', '未知警报')}")
             elif level == 'warning':
-                st.warning(f"🟡 {alert.get('message', 'Unknown alert')}")
+                st.warning(f"🟡 {alert.get('message', '未知警报')}")
             else:
-                st.info(f"ℹ️ {alert.get('message', 'Unknown alert')}")
+                st.info(f"ℹ️ {alert.get('message', '未知警报')}")
 
 
 def render_account_summary(account: Dict[str, Any]) -> None:
     """
-    Render account summary panel.
+    渲染账户概要面板
     
     Args:
-        account: Account data
+        account: 账户数据
     """
-    st.subheader("💰 Account Summary")
+    st.subheader(LABELS['account_summary'])
     
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.metric(
-            "Total Balance",
+            LABELS['total_balance'],
             f"${account.get('total_balance', 0):,.2f}"
         )
     
     with col2:
         st.metric(
-            "Available Balance",
+            LABELS['available_balance'],
             f"${account.get('available', 0):,.2f}"
         )
     
     with col3:
         st.metric(
-            "Unrealized PnL",
+            LABELS['unrealized_pnl'],
             f"${account.get('unrealized_pnl', 0):,.2f}"
         )
     
     with col4:
         st.metric(
-            "Realized PnL",
+            LABELS['realized_pnl'],
             f"${account.get('realized_pnl', 0):,.2f}"
         )
 
 
 def render_risk_limits(limits: Dict[str, Any]) -> None:
     """
-    Render risk limits status.
+    渲染风险限制状态
     
     Args:
-        limits: Risk limits configuration
+        limits: 风险限制配置
     """
-    st.subheader("🛡️ Risk Limits")
+    st.subheader(LABELS['risk_limits'])
     
     data = [
         {
-            'Limit': 'Max Position Size',
-            'Current': f"{limits.get('current_position_size', 0) * 100:.2f}%",
-            'Limit': f"{limits.get('max_position_size', 0) * 100:.1f}%",
-            'Status': '✅' if limits.get('position_size_ok', True) else '❌'
+            '限制项': LABELS['max_position_size'],
+            LABELS['current']: f"{limits.get('current_position_size', 0) * 100:.2f}%",
+            LABELS['limit']: f"{limits.get('max_position_size', 0) * 100:.1f}%",
+            LABELS['status']: '✅' if limits.get('position_size_ok', True) else '❌'
         },
         {
-            'Limit': 'Max Drawdown',
-            'Current': f"{limits.get('current_drawdown', 0) * 100:.2f}%",
-            'Limit': f"{limits.get('max_drawdown', 0) * 100:.1f}%",
-            'Status': '✅' if limits.get('drawdown_ok', True) else '❌'
+            '限制项': LABELS['max_drawdown'],
+            LABELS['current']: f"{limits.get('current_drawdown', 0) * 100:.2f}%",
+            LABELS['limit']: f"{limits.get('max_drawdown', 0) * 100:.1f}%",
+            LABELS['status']: '✅' if limits.get('drawdown_ok', True) else '❌'
         },
         {
-            'Limit': 'Max Leverage',
-            'Current': f"{limits.get('current_leverage', 1):.2f}x",
-            'Limit': f"{limits.get('max_leverage', 3):.1f}x",
-            'Status': '✅' if limits.get('leverage_ok', True) else '❌'
+            '限制项': LABELS['max_leverage'],
+            LABELS['current']: f"{limits.get('current_leverage', 1):.2f}x",
+            LABELS['limit']: f"{limits.get('max_leverage', 3):.1f}x",
+            LABELS['status']: '✅' if limits.get('leverage_ok', True) else '❌'
         },
         {
-            'Limit': 'Daily Loss',
-            'Current': f"{limits.get('current_daily_loss', 0) * 100:.2f}%",
-            'Limit': f"{limits.get('max_daily_loss', 0) * 100:.1f}%",
-            'Status': '✅' if limits.get('daily_loss_ok', True) else '❌'
+            '限制项': LABELS['daily_loss'],
+            LABELS['current']: f"{limits.get('current_daily_loss', 0) * 100:.2f}%",
+            LABELS['limit']: f"{limits.get('max_daily_loss', 0) * 100:.1f}%",
+            LABELS['status']: '✅' if limits.get('daily_loss_ok', True) else '❌'
         }
     ]
     
@@ -300,29 +342,29 @@ def render_risk_limits(limits: Dict[str, Any]) -> None:
 
 def render_var_analysis(risk_data: Dict[str, Any]) -> None:
     """
-    Render Value at Risk analysis.
+    渲染风险价值分析
     
     Args:
-        risk_data: Risk metrics
+        risk_data: 风险指标
     """
-    st.subheader("📊 Value at Risk (VaR)")
+    st.subheader("📊 风险价值 (VaR)")
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
         var_95 = risk_data.get('var_95', 0)
         st.metric(
-            "VaR (95%)",
+            "VaR (95%置信)",
             f"${var_95:,.2f}",
-            help="Expected loss at 95% confidence level"
+            help="95%置信水平下的预期损失"
         )
     
     with col2:
         var_99 = risk_data.get('var_99', 0)
         st.metric(
-            "VaR (99%)",
+            "VaR (99%置信)",
             f"${var_99:,.2f}",
-            help="Expected loss at 99% confidence level"
+            help="99%置信水平下的预期损失"
         )
     
     with col3:
@@ -330,5 +372,9 @@ def render_var_analysis(risk_data: Dict[str, Any]) -> None:
         st.metric(
             "CVaR / ES",
             f"${cvar:,.2f}",
-            help="Conditional VaR / Expected Shortfall"
+            help="条件风险价值 / 预期损失"
         )
+
+
+# 导出
+__all__ = ['RiskPanel', 'render_account_summary', 'render_risk_limits', 'render_var_analysis']
