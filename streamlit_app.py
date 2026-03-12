@@ -3,10 +3,11 @@ AI Quant Trading System - Streamlit Dashboard Entry Point
 ==========================================================
 
 This is the main entry point for Streamlit Cloud deployment.
-SECURITY: Uses import instead of exec() to prevent code injection.
+SECURITY: Uses runpy instead of exec() to prevent code injection.
 """
 
 import sys
+import os
 from pathlib import Path
 
 # Get the root directory
@@ -17,15 +18,17 @@ DASHBOARD_DIR = ROOT_DIR / "dashboard"
 sys.path.insert(0, str(ROOT_DIR))
 sys.path.insert(0, str(DASHBOARD_DIR))
 
-# Safe import instead of exec()
-# This prevents code injection vulnerabilities
+# Change to dashboard directory for relative imports
+os.chdir(str(DASHBOARD_DIR))
+
+# Use runpy to safely execute the dashboard module
+import runpy
+
 try:
-    from dashboard.streamlit_app import main
-    main()
-except ImportError as e:
+    runpy.run_path(str(DASHBOARD_DIR / "streamlit_app.py"), run_name="__main__")
+except Exception as e:
     import streamlit as st
     st.error(f"Failed to load dashboard: {e}")
     st.info("Please ensure the dashboard module is properly installed.")
-except Exception as e:
-    import streamlit as st
-    st.error(f"Application error: {e}")
+    import traceback
+    st.code(traceback.format_exc())

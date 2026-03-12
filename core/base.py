@@ -32,12 +32,22 @@ class BaseModule(ABC):
     
     def __init__(self, name: str, config: Optional[Dict[str, Any]] = None):
         self.name = name
-        self.config = config or {}
+        self._config = config or {}  # 使用私有变量
         self.logger = logging.getLogger(f"{self.__class__.__name__}.{name}")
         self._initialized = False
         self._running = False
         self._start_time: Optional[datetime] = None
         self._stop_event = asyncio.Event()
+    
+    @property
+    def config(self) -> Dict[str, Any]:
+        """Get module configuration."""
+        return self._config
+    
+    @config.setter
+    def config(self, value: Dict[str, Any]):
+        """Set module configuration."""
+        self._config = value
     
     @abstractmethod
     async def initialize(self) -> bool:
