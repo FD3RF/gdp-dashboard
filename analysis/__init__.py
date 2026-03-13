@@ -12,6 +12,13 @@ from .risk_matrix import (
     RiskLevel as MatrixRiskLevel,
     calculate_risk_matrix,
 )
+from .market_regime import (
+    MarketRegime,
+    MarketRegimeEngine,
+    RegimeState,
+    StrategyWeights,
+    detect_market_regime,
+)
 
 __all__ = [
     "Signal",
@@ -27,4 +34,9 @@ __all__ = [
     "RiskFactor",
     "MatrixRiskLevel",
     "calculate_risk_matrix",
+    "MarketRegime",
+    "MarketRegimeEngine",
+    "RegimeState",
+    "StrategyWeights",
+    "detect_market_regime",
 ]

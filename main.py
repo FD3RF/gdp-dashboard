@@ -54,6 +54,9 @@ from analysis.risk_monitor import risk_warning
 # Layer 10: 风险矩阵 (新增)
 from analysis.risk_matrix import calculate_risk_matrix, RiskMatrix
 
+# Layer 10: 市场状态识别 (核心新增)
+from analysis.market_regime import MarketRegimeEngine, MarketRegime, detect_market_regime
+
 # Layer 11: 解释层
 from explain.signal_explainer import explain_signal
 from explain.signal_history import record_signal, get_signal_reliability
@@ -113,6 +116,9 @@ class SystemState:
     
     # 6. 进化状态
     evolution_status: Dict[str, Any] = field(default_factory=dict)
+    
+    # 7. 市场状态识别 (核心新增)
+    market_regime: Dict[str, Any] = field(default_factory=dict)
     
     is_simulated: bool = False
 
@@ -208,7 +214,27 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     probs['short'] = round(probs['short'] / total * 100, 1)
     probs['hold'] = round(probs['hold'] / total * 100, 1)
     
-    # === 新增功能 4: 强化学习决策 ===
+    # === 新增功能 4: 市场状态识别 (核心) ===
+    regime_engine = MarketRegimeEngine()
+    regime_state = regime_engine.detect_regime(
+        hurst=hurst_value,
+        volatility=indicators.get('volatility', 0.02),
+        avg_volatility=indicators.get('avg_volatility', 0.02),
+        orderbook_imbalance=orderbook_analysis.imbalance if hasattr(orderbook_analysis, 'imbalance') else 0,
+        funding_rate=funding_rate or 0,
+        sentiment_score=sentiment_features.overall_score,
+        whale_net_flow=whale_data.get('flow_summary', {}).get('net_flow_eth', 0),
+        fractal_dim=1.5,
+        momentum=indicators.get('momentum', 0),
+        price_change_pct=indicators.get('price_change_pct', 0),
+        volume_ratio=indicators.get('volume_ratio', 1.0),
+    )
+    regime_result = regime_engine.get_regime_summary()
+    
+    # 根据市场状态调整策略权重
+    strategy_weights = regime_engine.get_strategy_weights(regime_state.regime)
+    
+    # === 新增功能 5: 强化学习决策 ===
     rl_result = {}
     if RL_AVAILABLE:
         try:
@@ -348,6 +374,8 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
         rl_decision=rl_result,
         risk_matrix=risk_matrix_result,
         evolution_status=evolution_data,
+        # 市场状态识别
+        market_regime=regime_result,
         is_simulated=is_simulated
     )
 

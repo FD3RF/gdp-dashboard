@@ -312,6 +312,52 @@ def main():
     
     st.divider()
     
+    # === 市场状态识别 (核心新增) ===
+    st.subheader("🎯 市场状态识别 (Regime Engine)")
+    regime = state.market_regime
+    
+    if regime:
+        regime_name = regime.get('regime', 'neutral')
+        regime_icons = {
+            "trend_up": "📈 强势上涨",
+            "trend_down": "📉 强势下跌",
+            "range": "↔️ 震荡区间",
+            "volatile": "⚡ 高波动",
+            "liquidation": "💥 清算事件",
+            "accumulation": "🏦 吸筹阶段",
+            "distribution": "📤 派发阶段",
+            "panic": "😱 恐慌状态",
+            "euphoria": "🚀 狂热状态",
+            "neutral": "➡️ 中性",
+        }
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            icon = regime_icons.get(regime_name, regime_name)
+            st.metric("市场状态", icon)
+        with col2:
+            st.metric("置信度", f"{regime.get('confidence', 0)*100:.0f}%")
+        with col3:
+            st.metric("趋势强度", f"{regime.get('trend_strength', 0):.2f}")
+        with col4:
+            st.metric("波动水平", f"{regime.get('volatility_level', 0):.2f}")
+        
+        # 策略建议
+        recommended = regime.get('recommended_strategies', [])
+        avoided = regime.get('avoided_strategies', [])
+        
+        if recommended:
+            st.success(f"✅ 推荐策略: {', '.join(recommended)}")
+        if avoided:
+            st.info(f"⚠️ 避免策略: {', '.join(avoided)}")
+        
+        # 风险因素
+        risks = regime.get('risk_factors', [])
+        for risk in risks[:3]:
+            st.warning(f"⚠️ {risk}")
+    
+    st.divider()
+    
     # === AI 决策解释 ===
     st.subheader("📝 AI 决策解释 (M-35/36)")
     explanation = state.explanation
