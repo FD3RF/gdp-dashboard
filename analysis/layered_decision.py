@@ -645,16 +645,23 @@ class FourLayerDecisionEngine:
         reason: str,
     ) -> FourLayerDecision:
         """创建HOLD决策"""
+        # 修复：即使最终决策是HOLD，也保留方向层的置信度用于显示
+        # 这样用户可以看到信号的真实强度
+        display_confidence = direction_layer.confidence if direction_layer.passed else risk_layer.confidence
+        
+        # 使用方向层的方向（而不是NEUTRAL），这样用户可以看到信号方向
+        primary_dir = direction_layer.direction if direction_layer.passed else Direction.NEUTRAL
+        
         return FourLayerDecision(
             final_direction=Direction.NEUTRAL,
             final_action="HOLD",
-            confidence=0,
+            confidence=display_confidence,  # 显示方向层置信度
             risk_layer=risk_layer,
             direction_layer=direction_layer,
             entry_layer=entry_layer,
             position_layer=position_layer,
-            primary_direction=Direction.NEUTRAL,
-            dominant_module="none",
+            primary_direction=primary_dir,  # 显示信号方向
+            dominant_module=direction_layer.details.get("dominant", "none") if direction_layer.passed else "none",
             entry_confirmed=False,
             position_size=PositionSize.NONE,
             position_multiplier=0,
