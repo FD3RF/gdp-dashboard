@@ -17,3 +17,7 @@ requests>=2.32.0
 # Data processing
 python-dateutil>=2.9.0
 pytz>=2024.1
+
+# Machine Learning (for confidence calibration)
+scikit-learn>=1.5.0
+scipy>=1.14.0
