@@ -242,6 +242,41 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     # 根据市场状态调整策略权重
     strategy_weights = regime_engine.get_strategy_weights(regime_state.regime)
     
+    # 趋势行情中降低观望权重
+    if regime_state.regime in [MarketRegime.TREND_UP, MarketRegime.TREND_DOWN]:
+        # 趋势行情：降低观望，增强方向性
+        if regime_state.regime == MarketRegime.TREND_UP:
+            probs['long'] = min(80, probs['long'] * 1.3 + 10)
+            probs['hold'] = max(15, probs['hold'] * 0.6)
+        else:
+            probs['short'] = min(80, probs['short'] * 1.3 + 10)
+            probs['hold'] = max(15, probs['hold'] * 0.6)
+        
+        # 重新归一化
+        total = probs['long'] + probs['short'] + probs['hold']
+        probs['long'] = round(probs['long'] / total * 100, 1)
+        probs['short'] = round(probs['short'] / total * 100, 1)
+        probs['hold'] = round(probs['hold'] / total * 100, 1)
+    
+    # 震荡行情中增强均值回归
+    elif regime_state.regime == MarketRegime.RANGE:
+        # 震荡行情：如果价格在支撑阻力之间，建议观望
+        pass
+    
+    # 恐慌/狂热中反向操作
+    elif regime_state.regime in [MarketRegime.PANIC, MarketRegime.EUPHORIA]:
+        if regime_state.regime == MarketRegime.PANIC:
+            # 恐慌时考虑抄底
+            probs['long'] = min(70, probs['long'] + 15)
+        else:
+            # 狂热时考虑反向
+            probs['short'] = min(70, probs['short'] + 15)
+        
+        total = probs['long'] + probs['short'] + probs['hold']
+        probs['long'] = round(probs['long'] / total * 100, 1)
+        probs['short'] = round(probs['short'] / total * 100, 1)
+        probs['hold'] = round(probs['hold'] / total * 100, 1)
+    
     # === 新增功能 5: 强化学习决策 ===
     rl_result = {}
     if RL_AVAILABLE:
@@ -298,7 +333,43 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     )
     
     # === 新增功能 7: 订单流分析 ===
-    order_flow_result = analyze_order_flow()
+    # 从订单簿推算订单流
+    try:
+        from features.order_flow import OrderFlowAnalyzer
+        flow_analyzer = OrderFlowAnalyzer()
+        
+        # 从订单簿推断成交
+        bids = orderbook_data.get('bids', [])
+        asks = orderbook_data.get('asks', [])
+        
+        if bids and asks:
+            bid_vol = sum(float(b[1]) if isinstance(b, (list, tuple)) else 0 for b in bids[:10])
+            ask_vol = sum(float(a[1]) if isinstance(a, (list, tuple)) else 0 for a in asks[:10])
+            imbalance = orderbook_analysis.imbalance if hasattr(orderbook_analysis, 'imbalance') else 0
+            
+            # 模拟最近成交
+            import random
+            for i in range(20):
+                # 基于失衡决定买卖比例
+                if imbalance > 0:
+                    buy_ratio = 0.6 + abs(imbalance) * 0.3
+                else:
+                    buy_ratio = 0.4 - abs(imbalance) * 0.3
+                
+                # 随机生成成交
+                is_buy = random.random() < buy_ratio
+                vol = random.uniform(0.5, 5.0)
+                price_change = random.uniform(-2, 2)
+                
+                flow_analyzer.add_trade(
+                    price=current_price + price_change,
+                    volume=vol,
+                    side="buy" if is_buy else "sell"
+                )
+        
+        order_flow_result = flow_analyzer.get_order_flow_summary()
+    except Exception as e:
+        order_flow_result = {"error": str(e)}
     
     # === 新增功能 8: 清算监控 ===
     liquidation_result = monitor_liquidations(

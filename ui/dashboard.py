@@ -304,7 +304,9 @@ def main():
     with c3:
         st.metric("盈亏比", f"{perf.get('profit_factor', 0):.2f}")
     with c4:
-        st.metric("平均盈亏%", f"{perf.get('avg_pnl_pct', 0):.2f}%")
+        avg_win = perf.get('avg_win_percent', 0)
+        avg_loss = perf.get('avg_loss_percent', 0)
+        st.metric("平均盈亏%", f"+{avg_win:.2f}% / -{avg_loss:.2f}%")
     with c5:
         weights = evolution.get('current_weights', {})
         top_feature = max(weights, key=weights.get) if weights else 'N/A'
