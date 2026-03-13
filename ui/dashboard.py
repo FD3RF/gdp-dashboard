@@ -543,6 +543,42 @@ def main():
     
     st.divider()
     
+    # === 硬规则风险过滤状态 (核心修复) ===
+    st.subheader("🛡️ 风险过滤 (Hard Filter)")
+    
+    rf = state.risk_filter_status
+    result = rf.get('result', 'unknown')
+    is_allowed = rf.get('is_allowed', False)
+    
+    # 过滤结果
+    col1, col2 = st.columns(2)
+    with col1:
+        if result == 'block':
+            st.error(f"🚫 交易被阻止")
+            st.caption(rf.get('block_reason', '原因未知'))
+        elif result == 'warning':
+            st.warning(f"⚠️ 交易警告")
+        else:
+            st.success(f"✅ 交易通过所有检查")
+    
+    with col2:
+        st.metric("交易许可", "允许" if is_allowed else "禁止")
+    
+    # 各项检查结果
+    checks = rf.get('checks', {})
+    if checks:
+        st.markdown("**检查详情:**")
+        cols = st.columns(min(5, len(checks)))
+        check_names = ['risk_reward', 'reliability', 'data_quality', 'meta_filter', 'regime_alignment']
+        for i, name in enumerate(check_names[:5]):
+            with cols[i]:
+                check_result = checks.get(name, 'N/A')
+                icon = '✅' if '✓' in str(check_result) else '❌' if '❌' in str(check_result) else '⚠️'
+                st.caption(f"{icon} {name[:10]}")
+                st.caption(check_result[:20] if len(str(check_result)) > 20 else check_result)
+    
+    st.divider()
+    
     # === K线图 ===
     st.subheader("📈 K线图")
     from data.market_stream import get_realtime_eth_data
@@ -555,7 +591,7 @@ def main():
         st.plotly_chart(fig, use_container_width=True)
     
     # 底部
-    st.caption(f"最后更新: {state.timestamp} | 交易所: {state.exchange} | 12层架构 v3.3 + 特征时间同步层")
+    st.caption(f"最后更新: {state.timestamp} | 交易所: {state.exchange} | 12层架构 v3.4 + 硬规则风险过滤")
 
 
 if __name__ == "__main__":

@@ -12,6 +12,13 @@ from .risk_matrix import (
     RiskLevel as MatrixRiskLevel,
     calculate_risk_matrix,
 )
+from .risk_filter import (
+    HardRiskFilter,
+    RiskFilterDecision,
+    FilterResult,
+    get_risk_filter,
+    apply_hard_filter,
+)
 from .market_regime import (
     MarketRegime,
     MarketRegimeEngine,
@@ -45,11 +52,19 @@ __all__ = [
     "RiskFactor",
     "MatrixRiskLevel",
     "calculate_risk_matrix",
+    # Risk Filter
+    "HardRiskFilter",
+    "RiskFilterDecision",
+    "FilterResult",
+    "get_risk_filter",
+    "apply_hard_filter",
+    # Market Regime
     "MarketRegime",
     "MarketRegimeEngine",
     "RegimeState",
     "StrategyWeights",
     "detect_market_regime",
+    # Signal Engine
     "SignalEngine",
     "SignalAggregator",
     "MetaFilter",

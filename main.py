@@ -59,6 +59,9 @@ from analysis.risk_monitor import risk_warning
 # Layer 10: 风险矩阵 (新增)
 from analysis.risk_matrix import calculate_risk_matrix, RiskMatrix
 
+# Layer 10: 硬规则风险过滤 (核心新增)
+from analysis.risk_filter import apply_hard_filter, HardRiskFilter, FilterResult
+
 # Layer 10: 市场状态识别 (核心新增)
 from analysis.market_regime import MarketRegimeEngine, MarketRegime, detect_market_regime
 
@@ -140,6 +143,10 @@ class SystemState:
     # 11. 特征同步状态 (核心修复)
     feature_sync_status: Dict[str, Any] = field(default_factory=dict)
     data_quality_score: float = 1.0
+    
+    # 12. 风险过滤状态 (核心新增)
+    risk_filter_status: Dict[str, Any] = field(default_factory=dict)
+    is_trading_allowed: bool = True
     
     is_simulated: bool = False
 
@@ -463,17 +470,40 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     decision = make_decision(probs)
     plan = generate_trade_plan(df, decision.signal)
     
-    # === Layer 11: 解释 ===
+    # === Layer 11: 解释 (使用Feature Sync) ===
     explanation = explain_signal(
         decision.signal.value,
         probs,
         indicators,
         orderbook_analysis.__dict__ if hasattr(orderbook_analysis, '__dict__') else {},
-        funding
+        funding,
+        # 新参数：使用Feature Sync
+        feature_matrix=feature_matrix,
+        unified_signal=unified_signal_result,
+        regime_data=regime_result,
     )
     
     # 信号可靠度
     reliability = get_signal_reliability(symbol)
+    
+    # === 核心修复: 硬规则风险过滤 ===
+    risk_filter_decision = apply_hard_filter(
+        signal=decision.signal.value,
+        trade_plan=plan,
+        reliability=reliability,
+        data_quality_score=data_quality_score,
+        unified_signal=unified_signal_result,
+        probabilities=probs,
+    )
+    is_trading_allowed = risk_filter_decision.is_trading_allowed()
+    
+    # 如果被过滤，强制改为HOLD
+    if not is_trading_allowed and decision.signal != Signal.HOLD:
+        decision.signal = Signal.HOLD
+        probs['hold'] = max(70, probs['hold'])
+        probs['long'] = min(15, probs['long'])
+        probs['short'] = min(15, probs['short'])
+        plan = None  # 取消交易计划
     
     # === 新增功能 6: 进化状态 ===
     evolution_data = get_evolution_status()
@@ -560,6 +590,9 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
         # 特征同步状态 (核心修复)
         feature_sync_status=feature_sync_status,
         data_quality_score=data_quality_score,
+        # 风险过滤状态 (核心修复)
+        risk_filter_status=risk_filter_decision.to_dict(),
+        is_trading_allowed=is_trading_allowed,
         is_simulated=is_simulated
     )
 

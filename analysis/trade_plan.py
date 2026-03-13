@@ -36,7 +36,7 @@ def generate_trade_plan(df: pd.DataFrame, signal: Signal, account_balance: float
         account_balance: 账户余额
         
     Returns:
-        TradePlan 或 None (如果是观望信号)
+        TradePlan 或 None (如果是观望信号或RR不满足)
     """
     if signal == Signal.HOLD:
         return None
@@ -56,24 +56,26 @@ def generate_trade_plan(df: pd.DataFrame, signal: Signal, account_balance: float
         # 做多
         entry = close  # 或稍低于当前价
         
-        # 止损: 下方 ATR * 1.5 或前低
-        stop_loss = min(low_20, close - atr * 1.5)
+        # 止损: 下方 ATR * 2.0 (增加止损空间以提高RR)
+        atr_stop = close - atr * 2.0
+        stop_loss = min(low_20, atr_stop)
         
-        # 止盈: 上方阻力位或 ATR 倍数
-        take_profit_1 = close + atr * 1.5
-        take_profit_2 = min(high_20, close + atr * 3)
+        # 止盈: 目标至少是风险的1.5倍以上
+        take_profit_1 = close + atr * 2.5  # 提高到2.5倍ATR
+        take_profit_2 = min(high_20, close + atr * 4)
         take_profit_3 = high_20
         
     else:  # SHORT
         # 做空
         entry = close  # 或稍高于当前价
         
-        # 止损: 上方 ATR * 1.5 或前高
-        stop_loss = max(high_20, close + atr * 1.5)
+        # 止损: 上方 ATR * 2.0
+        atr_stop = close + atr * 2.0
+        stop_loss = max(high_20, atr_stop)
         
-        # 止盈: 下方支撑位或 ATR 倍数
-        take_profit_1 = close - atr * 1.5
-        take_profit_2 = max(low_20, close - atr * 3)
+        # 止盈: 目标至少是风险的1.5倍以上
+        take_profit_1 = close - atr * 2.5
+        take_profit_2 = max(low_20, close - atr * 4)
         take_profit_3 = low_20
     
     # 风险收益比计算
@@ -81,19 +83,43 @@ def generate_trade_plan(df: pd.DataFrame, signal: Signal, account_balance: float
     reward_1 = abs(take_profit_1 - entry)
     risk_reward = reward_1 / (risk + 1e-8)
     
+    # CRITICAL: 如果RR < 1.2，重新调整止损/止盈
+    if risk_reward < 1.2:
+        # 尝试扩大止盈
+        if signal == Signal.LONG:
+            take_profit_1 = close + atr * 3.0
+            reward_1 = abs(take_profit_1 - entry)
+            risk_reward = reward_1 / (risk + 1e-8)
+        else:
+            take_profit_1 = close - atr * 3.0
+            reward_1 = abs(take_profit_1 - entry)
+            risk_reward = reward_1 / (risk + 1e-8)
+        
+        # 如果仍然不满足，返回None
+        if risk_reward < 1.2:
+            return None  # 无法生成合理RR的交易计划
+    
     # 仓位计算 (风险 2% 原则)
     risk_percent = 0.02
     max_loss = account_balance * risk_percent
     position_size = max_loss / (risk + 1e-8)
     position_ratio = min(position_size / account_balance, 0.3)  # 最大 30%
     
-    # 杠杆建议
+    # 根据RR调整仓位
+    if risk_reward >= 2.5:
+        position_ratio = min(position_ratio * 1.2, 0.4)  # 高RR可以增加仓位
+    elif risk_reward < 1.5:
+        position_ratio = min(position_ratio * 0.8, 0.2)  # 低RR减少仓位
+    
+    # 杠杆建议 (基于RR)
     if risk_reward >= 3:
         leverage = 1
     elif risk_reward >= 2:
         leverage = 2
-    else:
+    elif risk_reward >= 1.5:
         leverage = 3
+    else:
+        leverage = 1  # 低RR不建议杠杆
     
     return TradePlan(
         signal=signal.value,
