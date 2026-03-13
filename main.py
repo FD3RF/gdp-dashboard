@@ -28,6 +28,9 @@ from data.kline_builder import calculate_indicators, get_latest_indicators
 # Layer 2.5: 特征时间同步层 (核心修复)
 from data.feature_sync import get_feature_sync, sync_features, FeatureMatrix
 
+# Layer 2.6: 真实Trades数据流 (核心修复)
+from data.trades_stream import get_real_cvd, SimulatedTradesStream
+
 # Layer 5: 特征工程层
 from features.orderbook_features import OrderbookAnalyzer
 from features.hurst import HurstExponent
@@ -70,6 +73,9 @@ from analysis.signal_engine import SignalEngine, generate_unified_signal, get_si
 
 # Layer 10: 四层决策引擎 (核心新增)
 from analysis.layered_decision import make_four_layer_decision, get_four_layer_engine, FourLayerDecision, PositionSize
+
+# Layer 10.5: 统一决策引擎 (核心整合)
+from analysis.unified_decision import make_unified_decision, get_unified_engine, UnifiedDecision
 
 # Layer 11: 解释层
 from explain.signal_explainer import explain_signal
@@ -151,9 +157,10 @@ class SystemState:
     risk_filter_status: Dict[str, Any] = field(default_factory=dict)
     is_trading_allowed: bool = True
     
-    # 13. 四层决策状态 (核心新增)
-    layered_decision: Dict[str, Any] = field(default_factory=dict)
+    # 13. 统一决策状态 (核心整合)
+    unified_decision: Dict[str, Any] = field(default_factory=dict)
     position_multiplier: float = 1.0  # 仓位乘数
+    has_decision_conflict: bool = False  # 决策冲突标记
     
     is_simulated: bool = False
 
@@ -360,48 +367,46 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
         except Exception as e:
             rl_result = {"error": str(e)}
     
-    # === 新增功能 7: 订单流分析 (先计算，后面会用到) ===
+    # === 新增功能 7: 真实订单流分析 (修复CVD数据缺失) ===
     try:
+        # 使用真实Trades数据流
+        imbalance_for_cvd = orderbook_analysis.imbalance if hasattr(orderbook_analysis, 'imbalance') else 0
+        real_cvd_data = get_real_cvd(
+            current_price=current_price,
+            use_simulated=True,  # WebSocket不可用时使用模拟
+            imbalance_bias=imbalance_for_cvd,
+            window_minutes=5,
+        )
+        
+        # 同时使用原有订单流分析
         from features.order_flow import OrderFlowAnalyzer
         flow_analyzer = OrderFlowAnalyzer()
         
-        # 从订单簿推断成交
-        bids = orderbook_data.get('bids', [])
-        asks = orderbook_data.get('asks', [])
+        # 从真实CVD数据获取成交信息
+        cvd_value = real_cvd_data.get('value', 0)
         
-        if bids and asks:
-            bid_vol = sum(float(b[1]) if isinstance(b, (list, tuple)) else 0 for b in bids[:10])
-            ask_vol = sum(float(a[1]) if isinstance(a, (list, tuple)) else 0 for a in asks[:10])
-            imbalance = orderbook_analysis.imbalance if hasattr(orderbook_analysis, 'imbalance') else 0
-            
-            # 模拟最近成交
-            import random
-            for i in range(20):
-                # 基于失衡决定买卖比例
-                if imbalance > 0:
-                    buy_ratio = 0.6 + abs(imbalance) * 0.3
-                else:
-                    buy_ratio = 0.4 - abs(imbalance) * 0.3
-                
-                # 随机生成成交
-                is_buy = random.random() < buy_ratio
-                vol = random.uniform(0.5, 5.0)
-                price_change = random.uniform(-2, 2)
-                
-                flow_analyzer.add_trade(
-                    price=current_price + price_change,
-                    volume=vol,
-                    side="buy" if is_buy else "sell"
-                )
-        
-        order_flow_result = flow_analyzer.get_order_flow_summary()
+        order_flow_result = {
+            'cvd': {
+                'value': cvd_value,
+                'direction': real_cvd_data.get('direction', 'neutral'),
+                'signal': real_cvd_data.get('signal', '均衡'),
+                'strength': real_cvd_data.get('strength', 0),
+            },
+            'delta': {
+                'value': cvd_value,
+                'pct': real_cvd_data.get('value', 0) / 100,  # 简化
+            },
+            'imbalance': {
+                'direction': real_cvd_data.get('direction', 'neutral'),
+            },
+            'is_real_data': True,  # 标记为真实数据源
+        }
         
         # 同步订单流特征
-        cvd_value = order_flow_result.get('cvd', {}).get('value', 0)
         feature_sync.update_feature("cvd", cvd_value, "order_flow")
         
     except Exception as e:
-        order_flow_result = {"error": str(e)}
+        order_flow_result = {"error": str(e), "is_real_data": False}
     
     # === 新增功能 8: 清算监控 (先计算) ===
     liquidation_result = monitor_liquidations(
@@ -504,8 +509,8 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     )
     is_trading_allowed = risk_filter_decision.is_trading_allowed()
     
-    # === 核心新增: 四层决策引擎 ===
-    # 准备流动性数据
+    # === 核心整合: 统一决策引擎 ===
+    # 整合 Signal Engine + 四层决策 + 硬规则过滤
     support_zones = [(z[0], z[1]) for z in liquidity.get('support_zones', [])[:3]]
     resistance_zones = [(z[0], z[1]) for z in liquidity.get('resistance_zones', [])[:3]]
     cvd_value = order_flow_result.get('cvd', {}).get('value', 0) if order_flow_result else 0
@@ -522,64 +527,55 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     # 准备资金费率数据
     funding_extreme_flag = abs(funding_extreme_data.get('summary', {}).get('avg_z_score', 0)) > 2
     
-    # 信号一致性
-    signal_consistency = unified_signal_result.get('quality_metrics', {}).get('consistency', 0.5)
-    
-    # 执行四层决策
-    layered_decision_result = make_four_layer_decision(
-        data_quality_score=data_quality_score,
-        meta_filter_passed=unified_signal_result.get('meta_filter', {}).get('passed', True),
-        risk_score=risk_matrix_result.get('score', 30),
+    # 执行统一决策
+    unified_decision_result = make_unified_decision(
+        # Signal Engine 参数
+        hurst=hurst_value,
+        momentum=indicators.get('momentum', 0),
+        imbalance=imbalance_value,
+        whale_flow=whale_data.get('flow_summary', {}).get('net_flow_eth', 0),
+        funding_rate=funding_rate or 0,
+        cvd=cvd_value,
+        sentiment=sentiment_features.overall_score,
         regime=regime_result.get('regime', 'neutral'),
         regime_confidence=regime_result.get('confidence', 0.5),
-        hurst=hurst_value,
+        risk_score=risk_matrix_result.get('score', 30),
+        # 四层决策参数
+        data_quality_score=data_quality_score,
         current_price=current_price,
         support_zones=support_zones,
         resistance_zones=resistance_zones,
         liquidation_zones=liquidation_zones,
-        funding_rate=funding_rate or 0,
         funding_extreme=funding_extreme_flag,
-        signal_consistency=signal_consistency,
-        cvd=cvd_value,
-        delta=order_flow_result.get('delta', {}).get('value', 0) if order_flow_result else 0,
-        orderbook_imbalance=imbalance_value,
-        momentum=indicators.get('momentum', 0),
-        whale_flow=whale_data.get('flow_summary', {}).get('net_flow_eth', 0),
+        # 硬规则参数
+        reliability=reliability,
+        trade_plan=plan,
     )
     
     # 获取仓位乘数
-    position_multiplier = layered_decision_result.position_multiplier
+    position_multiplier = unified_decision_result.position_multiplier
     
-    # 使用四层决策覆盖原决策
-    if is_trading_allowed and layered_decision_result.position_multiplier > 0:
-        # 如果风控通过且有仓位，使用四层决策
-        if layered_decision_result.final_action == "LONG":
-            decision.signal = Signal.LONG
-            probs['long'] = layered_decision_result.confidence
-            probs['hold'] = 100 - layered_decision_result.confidence
-        elif layered_decision_result.final_action == "SHORT":
-            decision.signal = Signal.SHORT
-            probs['short'] = layered_decision_result.confidence
-            probs['hold'] = 100 - layered_decision_result.confidence
-        else:
-            decision.signal = Signal.HOLD
-            probs['hold'] = max(70, probs['hold'])
-            position_multiplier = 0
-        
-        # 重新生成交易计划（根据仓位调整）
-        if decision.signal != Signal.HOLD:
-            plan = generate_trade_plan(df, decision.signal)
-            # 根据仓位乘数调整建议仓位
-            if plan:
-                plan.position_size = plan.position_size * position_multiplier
+    # 使用统一决策结果
+    if unified_decision_result.action == "LONG":
+        decision.signal = Signal.LONG
+        probs['long'] = unified_decision_result.confidence
+        probs['hold'] = 100 - unified_decision_result.confidence
+    elif unified_decision_result.action == "SHORT":
+        decision.signal = Signal.SHORT
+        probs['short'] = unified_decision_result.confidence
+        probs['hold'] = 100 - unified_decision_result.confidence
     else:
-        # 如果被风控过滤，强制改为HOLD
         decision.signal = Signal.HOLD
         probs['hold'] = max(70, probs['hold'])
-        probs['long'] = min(15, probs['long'])
-        probs['short'] = min(15, probs['short'])
-        plan = None
         position_multiplier = 0
+    
+    # 重新生成交易计划（根据仓位调整）
+    if decision.signal != Signal.HOLD and position_multiplier > 0:
+        plan = generate_trade_plan(df, decision.signal)
+        if plan:
+            plan.position_size = plan.position_size * position_multiplier
+    else:
+        plan = None
     
     # === 新增功能 6: 进化状态 ===
     evolution_data = get_evolution_status()
@@ -669,9 +665,10 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
         # 风险过滤状态 (核心修复)
         risk_filter_status=risk_filter_decision.to_dict(),
         is_trading_allowed=is_trading_allowed,
-        # 四层决策状态 (核心新增)
-        layered_decision=layered_decision_result.to_dict(),
+        # 统一决策状态 (核心整合)
+        unified_decision=unified_decision_result.to_dict(),
         position_multiplier=position_multiplier,
+        has_decision_conflict=unified_decision_result.has_conflict,
         is_simulated=is_simulated
     )
 

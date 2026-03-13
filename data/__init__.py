@@ -24,6 +24,13 @@ from .feature_sync import (
     get_feature_sync,
     sync_features,
 )
+from .trades_stream import (
+    TradesStream,
+    AggTrade,
+    SimulatedTradesStream,
+    get_trades_stream,
+    get_real_cvd,
+)
 
 __all__ = [
     "MultiExchangeManager",
@@ -44,4 +51,10 @@ __all__ = [
     "TimestampedFeature",
     "get_feature_sync",
     "sync_features",
+    # Trades数据流
+    "TradesStream",
+    "AggTrade",
+    "SimulatedTradesStream",
+    "get_trades_stream",
+    "get_real_cvd",
 ]

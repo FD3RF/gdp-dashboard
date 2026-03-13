@@ -579,67 +579,67 @@ def main():
     
     st.divider()
     
-    # === 四层决策状态 (核心新增) ===
-    st.subheader("🎯 四层决策引擎")
-    ld = state.layered_decision
+    # === 统一决策状态 (核心整合) ===
+    st.subheader("🎯 统一决策引擎")
+    ud = state.unified_decision
     
-    if ld:
-        final_action = ld.get('final_action', 'HOLD')
-        primary_dir = ld.get('primary_direction', 'neutral')
-        dominant = ld.get('dominant_module', 'none')
-        entry_confirmed = ld.get('entry_confirmed', False)
-        pos_multiplier = ld.get('position_multiplier', 0)
-        entry_reason = ld.get('entry_reason', '')
-        key_level = ld.get('key_level')
-        liq_trigger = ld.get('liquidation_trigger')
-        crowd_warning = ld.get('crowding_warning')
+    if ud:
+        action = ud.get('action', 'HOLD')
+        confidence = ud.get('confidence', 0)
+        position_mult = ud.get('position_multiplier', 0)
+        decision_source = ud.get('decision_source', 'unknown')
+        has_conflict = ud.get('has_conflict', False)
+        conflict_reason = ud.get('conflict_reason', '')
         
         # 最终决策
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            action_icon = "🟢" if final_action == "LONG" else "🔴" if final_action == "SHORT" else "⚪"
-            st.metric("最终决策", f"{action_icon} {final_action}")
+            action_icon = "🟢" if action == "LONG" else "🔴" if action == "SHORT" else "⚪"
+            st.metric("最终决策", f"{action_icon} {action}")
         with col2:
-            dir_icon = "📈" if primary_dir == "long" else "📉" if primary_dir == "short" else "➡️"
-            st.metric("主方向", f"{dir_icon} {primary_dir}")
+            st.metric("置信度", f"{confidence:.1f}")
         with col3:
-            dom_text = "趋势" if dominant == "trend" else "订单流" if dominant == "order_flow" else "无"
-            st.metric("主导模块", dom_text)
+            st.metric("仓位", f"{position_mult*100:.0f}%")
         with col4:
-            st.metric("仓位", f"{pos_multiplier*100:.0f}%")
+            st.metric("决策来源", decision_source)
         
-        # 关键信息
-        if key_level:
-            st.caption(f"📍 关键价位: ${key_level:,.2f}")
-        if liq_trigger:
-            st.warning(f"💥 {liq_trigger}")
-        if crowd_warning:
-            st.warning(f"⚠️ {crowd_warning}")
+        # 冲突警告
+        if has_conflict:
+            st.error(f"⚠️ 决策冲突: {conflict_reason}")
         
-        # 决策原因
-        if final_action == "HOLD":
-            st.info(f"📋 观望原因: {entry_reason}")
+        # 引擎对比
+        se = ud.get('signal_engine', {})
+        fl = ud.get('four_layer', {})
+        hf = ud.get('hard_filter', {})
         
-        # 各层详情
-        layers = ld.get('layers', {})
-        cols = st.columns(4)
-        layer_info = [
-            ('risk', '第一层-风控'),
-            ('direction', '第二层-方向'),
-            ('entry', '第三层-入场'),
-            ('position', '第四层-仓位'),
-        ]
+        cols = st.columns(3)
+        with cols[0]:
+            se_dir = se.get('direction', 'neutral')
+            se_conf = se.get('confidence', 0)
+            icon = "🟢" if se_dir == "long" else "🔴" if se_dir == "short" else "⚪"
+            st.markdown(f"**Signal Engine**")
+            st.caption(f"{icon} {se_dir} ({se_conf:.0f}%)")
+        with cols[1]:
+            fl_action = fl.get('final_action', 'HOLD')
+            fl_pos = fl.get('position_multiplier', 0)
+            icon = "🟢" if fl_action == "LONG" else "🔴" if fl_action == "SHORT" else "⚪"
+            st.markdown(f"**四层决策**")
+            st.caption(f"{icon} {fl_action} ({fl_pos*100:.0f}%)")
+        with cols[2]:
+            hf_result = hf.get('result', 'unknown')
+            icon = "✅" if hf_result == 'pass' else "⚠️" if hf_result == 'warning' else "🚫"
+            st.markdown(f"**硬规则过滤**")
+            st.caption(f"{icon} {hf_result}")
         
-        for i, (name, title) in enumerate(layer_info):
-            with cols[i]:
-                info = layers.get(name, {})
-                passed = info.get('passed', False)
-                icon = "✅" if passed else "❌"
-                st.markdown(f"**{icon} {title}**")
-                reason = info.get('reason', '')
-                if len(reason) > 30:
-                    reason = reason[:30] + "..."
-                st.caption(reason)
+        # 订单流数据源
+        of = state.order_flow
+        is_real = of.get('is_real_data', False) if of else False
+        if is_real:
+            st.success("✅ 使用真实Trades数据")
+        else:
+            st.info("📊 使用模拟订单流数据")
+    
+    st.divider()
     
     st.divider()
     
@@ -655,7 +655,7 @@ def main():
         st.plotly_chart(fig, use_container_width=True)
     
     # 底部
-    st.caption(f"最后更新: {state.timestamp} | 交易所: {state.exchange} | 12层架构 v3.6 + 四层决策引擎")
+    st.caption(f"最后更新: {state.timestamp} | 交易所: {state.exchange} | v4.0 + 统一决策引擎 + 真实Trades数据")
 
 
 if __name__ == "__main__":

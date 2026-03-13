@@ -47,6 +47,12 @@ from .layered_decision import (
     get_four_layer_engine,
     make_four_layer_decision,
 )
+from .unified_decision import (
+    UnifiedDecisionEngine,
+    UnifiedDecision,
+    get_unified_engine,
+    make_unified_decision,
+)
 
 __all__ = [
     "Signal",
@@ -93,4 +99,9 @@ __all__ = [
     "PositionSize",
     "get_four_layer_engine",
     "make_four_layer_decision",
+    # Unified Decision
+    "UnifiedDecisionEngine",
+    "UnifiedDecision",
+    "get_unified_engine",
+    "make_unified_decision",
 ]
