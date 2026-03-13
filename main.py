@@ -602,7 +602,7 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
             'amount': alert.get('amount', 0),
         })
     
-     if decision.signal != Signal.HOLD:
+    if decision.signal != Signal.HOLD:
         try:
             # 获取历史统计
             perf = evolution_data.get('recent_performance', {})
