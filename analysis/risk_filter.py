@@ -75,14 +75,19 @@ class HardRiskFilter:
     
     在交易执行前进行最终检查
     任何一项不满足都会阻止交易
+    
+    阈值说明：
+    - MIN_CONFIDENCE: 置信度阈值，当前35% (原45%，降低门槛)
+    - MIN_RELIABILITY: 可靠度阈值，当前30 (原40%，降低门槛)
+    - 在积累足够样本前使用较低的阈值
     """
     
-    # 硬规则阈值
+    # 硬规则阈值 (降低门槛以适应早期数据积累阶段)
     MIN_RISK_REWARD = 1.2          # 最小风险收益比
-    MIN_RELIABILITY = 40           # 最小系统可靠度
+    MIN_RELIABILITY = 30           # 最小系统可靠度 (原40，降低)
     MIN_DATA_QUALITY = 0.7         # 最小数据质量
-    MIN_CONFIDENCE = 45            # 最小置信度
-    MIN_CONSISTENCY = 0.4          # 最小信号一致性
+    MIN_CONFIDENCE = 35            # 最小置信度 (原45，降低)
+    MIN_CONSISTENCY = 0.3          # 最小信号一致性 (原0.4，降低)
     
     def __init__(self, strict_mode: bool = True):
         """
