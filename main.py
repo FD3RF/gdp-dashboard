@@ -281,7 +281,14 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     # 检测模拟数据
     is_simulated = use_simulated or (symbol == "ETH/USDT" and 3000 < current_price < 4000)
     
-    # 记录信号
+    # 评估历史信号（三重标签法）
+    try:
+        from explain.signal_history import evaluate_signals
+        evaluate_signals(current_price)
+    except Exception:
+        pass
+    
+    # 记录信号（带TP/SL）
     if decision.signal != Signal.HOLD:
         record_signal(
             symbol=symbol,

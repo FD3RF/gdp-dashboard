@@ -525,10 +525,29 @@ class EvolutionManager:
         }
     
     def get_evolution_status(self) -> Dict[str, Any]:
-        """获取进化状态"""
+        """获取进化状态 - 使用三重标签法统计"""
+        # 从 signal_history 获取正确的统计
+        from explain.signal_history import get_tracker
+        tracker = get_tracker()
+        stats = tracker.get_stats()
+        reliability = tracker.get_reliability()
+        
         return {
-            "total_signals": len(self.tracker.signals),
-            "recent_performance": self.tracker.get_recent_performance(days=7),
+            "total_signals": stats.total_signals,
+            "completed_signals": stats.completed_signals,
+            "pending_signals": stats.pending_signals,
+            "recent_performance": {
+                "win_rate": stats.win_rate,
+                "profit_factor": stats.profit_factor,
+                "expectancy": stats.expectancy,
+                "avg_r_multiple": stats.avg_r_multiple,
+                "avg_win_percent": stats.avg_win_percent,
+                "avg_loss_percent": stats.avg_loss_percent,
+                "total_trades": stats.completed_signals,
+                "wins": stats.wins,
+                "losses": stats.losses,
+            },
+            "reliability": reliability,
             "current_weights": self.weight_optimizer.weights,
             "feature_importance": self.weight_optimizer.get_feature_importance(),
             "current_parameters": self.evolver.get_optimal_parameters(),
