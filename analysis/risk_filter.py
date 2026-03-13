@@ -77,17 +77,19 @@ class HardRiskFilter:
     任何一项不满足都会阻止交易
     
     阈值说明：
-    - MIN_CONFIDENCE: 置信度阈值，当前35% (原45%，降低门槛)
-    - MIN_RELIABILITY: 可靠度阈值，当前30 (原40%，降低门槛)
+    - MIN_CONFIDENCE: 置信度阈值，当前20% (进一步降低)
+    - MIN_RELIABILITY: 可靠度阈值，当前25 (进一步降低)
     - 在积累足够样本前使用较低的阈值
+    - 高置信度信号应被允许执行（即使可靠度低）
     """
     
-    # 硬规则阈值 (降低门槛以适应早期数据积累阶段)
+    # 硬规则阈值 (进一步降低门槛)
     MIN_RISK_REWARD = 1.2          # 最小风险收益比
-    MIN_RELIABILITY = 30           # 最小系统可靠度 (原40，降低)
+    MIN_RELIABILITY = 25           # 最小系统可靠度 (原30，再降低)
     MIN_DATA_QUALITY = 0.7         # 最小数据质量
-    MIN_CONFIDENCE = 35            # 最小置信度 (原45，降低)
-    MIN_CONSISTENCY = 0.3          # 最小信号一致性 (原0.4，降低)
+    MIN_CONFIDENCE = 20            # 最小置信度 (原35，再降低到20%)
+    MIN_CONSISTENCY = 0.25         # 最小信号一致性 (原0.3，再降低)
+    HIGH_CONFIDENCE_OVERRIDE = 50  # 高置信度覆盖阈值（置信度>50%时忽略可靠度检查）
     
     def __init__(self, strict_mode: bool = True):
         """
@@ -130,15 +132,21 @@ class HardRiskFilter:
         reasons = []
         block_reasons = []
         
+        # 获取置信度
+        confidence = probabilities.get('confidence', 0)
+        
         # 1. 风险收益比检查
-        rr_check = self._check_risk_reward(trade_plan)
+        rr_check = self._check_risk_reward(trade_plan, signal, confidence)
         if rr_check['status'] == 'fail':
             block_reasons.append(rr_check['reason'])
         elif rr_check['status'] == 'warn':
             reasons.append(rr_check['reason'])
         
         # 2. 系统可靠度检查
-        rel_check = self._check_reliability(reliability)
+        # 获取置信度，用于高置信度覆盖
+        confidence = probabilities.get('confidence', 0)
+        
+        rel_check = self._check_reliability(reliability, confidence)
         if rel_check['status'] == 'fail':
             block_reasons.append(rel_check['reason'])
         
@@ -197,9 +205,22 @@ class HardRiskFilter:
         
         return decision
     
-    def _check_risk_reward(self, trade_plan) -> Dict:
-        """检查风险收益比"""
+    def _check_risk_reward(self, trade_plan, signal: str = "HOLD", confidence: float = 0) -> Dict:
+        """检查风险收益比
+        
+        Args:
+            trade_plan: 交易计划
+            signal: 信号类型
+            confidence: 置信度
+        """
+        # 如果信号是 HOLD，不需要交易计划
+        if signal == "HOLD":
+            return {'status': 'pass', 'reason': '观望信号，无需交易计划'}
+        
+        # 高置信度信号可以没有交易计划（会在执行时自动生成）
         if trade_plan is None:
+            if confidence >= self.HIGH_CONFIDENCE_OVERRIDE:
+                return {'status': 'warn', 'reason': f'无交易计划，但置信度{confidence:.0f}%足够高'}
             return {'status': 'fail', 'reason': '无交易计划'}
         
         rr = getattr(trade_plan, 'risk_reward', 0)
@@ -220,10 +241,28 @@ class HardRiskFilter:
                 'reason': f"RR={rr:.2f} ✓"
             }
     
-    def _check_reliability(self, reliability: Dict) -> Dict:
-        """检查系统可靠度"""
+    def _check_reliability(self, reliability: Dict, confidence: float = 0) -> Dict:
+        """检查系统可靠度
+        
+        Args:
+            reliability: 可靠度数据
+            confidence: 当前信号置信度，用于高置信度覆盖
+        """
         score = reliability.get('score', 0)
         win_rate = reliability.get('win_rate', 0)  # 已经是百分比，无需再乘100
+        
+        # 高置信度覆盖：当置信度 > HIGH_CONFIDENCE_OVERRIDE 时，允许低可靠度
+        if confidence >= self.HIGH_CONFIDENCE_OVERRIDE:
+            if score < self.MIN_RELIABILITY:
+                return {
+                    'status': 'warn',  # 警告但不阻止
+                    'reason': f"高置信度({confidence:.0f}%)覆盖：可靠度{score}偏低，但信号强度足够"
+                }
+            else:
+                return {
+                    'status': 'pass',
+                    'reason': f"高置信度({confidence:.0f}%)，可靠度={score} ✓"
+                }
         
         if score < self.MIN_RELIABILITY:
             return {
