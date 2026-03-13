@@ -265,10 +265,12 @@ class FourLayerDecisionEngine:
         )
         
         # 构建最终决策
+        # 注意：置信度范围已统一为 0-100
         if entry_layer.passed and position_layer.passed:
             final_direction = direction_layer.direction
             final_action = final_direction.value.upper()
-            confidence = direction_layer.confidence * entry_layer.confidence
+            # 修复：入场层置信度作为调整因子（0-100 / 100 = 0-1）
+            confidence = direction_layer.confidence * (entry_layer.confidence / 100)
         elif entry_layer.passed and not position_layer.passed:
             # 入场确认但仓位管理不通过 → 减仓或放弃
             final_direction = direction_layer.direction
@@ -340,7 +342,7 @@ class FourLayerDecisionEngine:
         return LayerResult(
             layer=DecisionLayer.RISK_CONTROL,
             passed=passed,
-            confidence=0.5 if passed else 0.3,  # 风控层置信度：通过=50%，不通过=30%
+            confidence=50 if passed else 30,  # 修复：0-100范围，通过=50%，不通过=30%
             reason="; ".join(reasons) if reasons else "风控检查通过",
             details={
                 "data_quality": data_quality_score,
@@ -366,9 +368,11 @@ class FourLayerDecisionEngine:
         规则：
         1. 趋势明确（Hurst > 0.55 或 regime明确）→ 以趋势为主
         2. 趋势不明 → 以订单流为主
+        
+        注意：置信度范围统一为 0-100（而非 0-1）
         """
         direction = Direction.NEUTRAL
-        confidence = 0.5
+        confidence = 50  # 修复：从 0.5 改为 50（0-100范围）
         reasons = []
         dominant = "none"
         
@@ -385,19 +389,19 @@ class FourLayerDecisionEngine:
             
             if "trend_up" in regime or hurst > self.TREND_THRESHOLD:
                 direction = Direction.LONG
-                confidence = 0.7 + regime_confidence * 0.3
+                confidence = 70 + regime_confidence * 30  # 修复：0-100范围
                 reasons.append(f"趋势明确向上(H={hurst:.3f})")
             elif "trend_down" in regime or hurst < (1 - self.TREND_THRESHOLD):
                 direction = Direction.SHORT
-                confidence = 0.7 + regime_confidence * 0.3
+                confidence = 70 + regime_confidence * 30  # 修复：0-100范围
                 reasons.append(f"趋势明确向下(H={hurst:.3f})")
             elif "panic" in regime:
                 direction = Direction.LONG
-                confidence = 0.65
+                confidence = 65  # 修复：0-100范围
                 reasons.append("恐慌抄底")
             elif "euphoria" in regime:
                 direction = Direction.SHORT
-                confidence = 0.65
+                confidence = 65  # 修复：0-100范围
                 reasons.append("狂热反向")
             else:
                 # regime明确但方向中性
@@ -407,10 +411,10 @@ class FourLayerDecisionEngine:
             if cvd != 0:
                 if (direction == Direction.LONG and cvd > 0) or \
                    (direction == Direction.SHORT and cvd < 0):
-                    confidence = min(0.95, confidence + 0.05)
+                    confidence = min(95, confidence + 5)  # 修复：0-100范围
                     reasons.append(f"订单流确认(CVD={cvd:.1f})")
                 else:
-                    confidence = max(0.5, confidence - 0.05)
+                    confidence = max(50, confidence - 5)  # 修复：0-100范围
                     reasons.append(f"订单流背离(CVD={cvd:.1f})")
             
         else:
@@ -422,22 +426,22 @@ class FourLayerDecisionEngine:
             if abs(cvd) > self.ORDER_FLOW_THRESHOLD:
                 if cvd > 0:
                     direction = Direction.LONG
-                    confidence = 0.6 + min(0.2, abs(cvd) / 100)
+                    confidence = 60 + min(20, abs(cvd) / 5)  # 修复：0-100范围
                     reasons.append(f"订单流多头(CVD={cvd:.1f})")
                 else:
                     direction = Direction.SHORT
-                    confidence = 0.6 + min(0.2, abs(cvd) / 100)
+                    confidence = 60 + min(20, abs(cvd) / 5)  # 修复：0-100范围
                     reasons.append(f"订单流空头(CVD={cvd:.1f})")
             
             # 订单簿失衡确认
             if abs(orderbook_imbalance) > 0.2:
                 if (direction == Direction.LONG and orderbook_imbalance > 0) or \
                    (direction == Direction.SHORT and orderbook_imbalance < 0):
-                    confidence = min(0.85, confidence + 0.1)
+                    confidence = min(85, confidence + 10)  # 修复：0-100范围
                     reasons.append(f"订单簿确认(IMB={orderbook_imbalance:.2f})")
                 elif direction == Direction.NEUTRAL:
                     direction = Direction.LONG if orderbook_imbalance > 0 else Direction.SHORT
-                    confidence = 0.55
+                    confidence = 55  # 修复：0-100范围
                     reasons.append(f"订单簿失衡={orderbook_imbalance:.2f}")
         
         # 巨鲸流动辅助
@@ -447,7 +451,7 @@ class FourLayerDecisionEngine:
                 (direction == Direction.SHORT and whale_flow > 0)   # 流入=看跌
             )
             if flow_confirm:
-                confidence = min(0.95, confidence + 0.05)
+                confidence = min(95, confidence + 5)  # 修复：0-100范围
                 reasons.append(f"巨鲸确认")
         
         return LayerResult(
@@ -493,7 +497,7 @@ class FourLayerDecisionEngine:
         
         confirmed = False
         reasons = []
-        entry_confidence = 0.5
+        entry_confidence = 50  # 修复：从 0.5 改为 50（0-100范围）
         key_level = None
         liq_trigger = None
         crowd_warning = None
@@ -506,7 +510,7 @@ class FourLayerDecisionEngine:
                 if distance_pct < 0.015:  # 1.5%以内
                     key_level = price
                     confirmed = True
-                    entry_confidence += 0.15 * strength
+                    entry_confidence += 15 * strength  # 修复：0-100范围
                     reasons.append(f"接近支撑${price:,.0f}")
                     break
         else:
@@ -516,7 +520,7 @@ class FourLayerDecisionEngine:
                 if distance_pct < 0.015:
                     key_level = price
                     confirmed = True
-                    entry_confidence += 0.15 * strength
+                    entry_confidence += 15 * strength  # 修复：0-100范围
                     reasons.append(f"接近阻力${price:,.0f}")
                     break
         
@@ -533,7 +537,7 @@ class FourLayerDecisionEngine:
                        (primary_direction == Direction.SHORT and liq_direction == 'long'):
                         liq_trigger = f"清算引爆点@${liq_price:,.0f}"
                         confirmed = True
-                        entry_confidence += 0.1
+                        entry_confidence += 10  # 修复：0-100范围
                         reasons.append(f"清算引爆点")
                         break
         
@@ -548,26 +552,26 @@ class FourLayerDecisionEngine:
         # CVD确认
         if primary_direction == Direction.LONG:
             if cvd > 5:
-                entry_confidence += 0.1
+                entry_confidence += 10  # 修复：0-100范围
                 reasons.append(f"CVD确认={cvd:.1f}")
             elif cvd < -5:
-                entry_confidence -= 0.15
+                entry_confidence -= 15  # 修复：0-100范围
                 reasons.append(f"CVD背离={cvd:.1f}")
         else:
             if cvd < -5:
-                entry_confidence += 0.1
+                entry_confidence += 10  # 修复：0-100范围
                 reasons.append(f"CVD确认={cvd:.1f}")
             elif cvd > 5:
-                entry_confidence -= 0.15
+                entry_confidence -= 15  # 修复：0-100范围
                 reasons.append(f"CVD背离={cvd:.1f}")
         
-        entry_passed = confirmed and entry_confidence > 0.5
+        entry_passed = confirmed and entry_confidence > 50  # 修复：0-100范围
         
         return LayerResult(
             layer=DecisionLayer.ENTRY,
             passed=entry_passed,
             direction=primary_direction,
-            confidence=min(1.0, max(0, entry_confidence)),
+            confidence=min(100, max(0, entry_confidence)),  # 修复：0-100范围
             reason="; ".join(reasons),
             details={
                 "key_level": key_level,
