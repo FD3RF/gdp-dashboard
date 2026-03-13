@@ -35,6 +35,8 @@ from features.funding_rate import analyze_funding_rate
 from features.whale_monitor import whale_alert
 from features.sentiment_features import get_sentiment_features
 from features.funding_extreme import funding_extreme_alert
+from features.order_flow import analyze_order_flow, OrderFlowAnalyzer
+from features.liquidation_monitor import monitor_liquidations
 
 # Layer 6/7/8: AI分析层
 from ai.probability_model import calculate_probabilities
@@ -119,6 +121,12 @@ class SystemState:
     
     # 7. 市场状态识别 (核心新增)
     market_regime: Dict[str, Any] = field(default_factory=dict)
+    
+    # 8. 订单流分析 (核心新增)
+    order_flow: Dict[str, Any] = field(default_factory=dict)
+    
+    # 9. 清算监控 (核心新增)
+    liquidation: Dict[str, Any] = field(default_factory=dict)
     
     is_simulated: bool = False
 
@@ -289,6 +297,15 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
         },
     )
     
+    # === 新增功能 7: 订单流分析 ===
+    order_flow_result = analyze_order_flow()
+    
+    # === 新增功能 8: 清算监控 ===
+    liquidation_result = monitor_liquidations(
+        current_price=current_price,
+        open_interest=1000000,  # 默认持仓量
+    )
+    
     # === Layer 11: 解释 ===
     explanation = explain_signal(
         decision.signal.value,
@@ -376,6 +393,8 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
         evolution_status=evolution_data,
         # 市场状态识别
         market_regime=regime_result,
+        order_flow=order_flow_result,
+        liquidation=liquidation_result,
         is_simulated=is_simulated
     )
 

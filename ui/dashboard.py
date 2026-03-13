@@ -358,6 +358,83 @@ def main():
     
     st.divider()
     
+    # === 订单流分析 (核心新增) ===
+    st.subheader("📊 订单流分析 (Order Flow)")
+    flow = state.order_flow
+    
+    if flow:
+        cvd = flow.get('cvd', {})
+        delta = flow.get('delta', {})
+        imbalance = flow.get('imbalance', {})
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            cvd_val = cvd.get('value', 0)
+            cvd_icon = "📈" if cvd_val > 0 else "📉" if cvd_val < 0 else "➡️"
+            st.metric("CVD", f"{cvd_icon} {cvd_val:.2f}")
+        with col2:
+            st.metric("Delta", f"{delta.get('value', 0):.2f}")
+        with col3:
+            st.metric("Delta%", f"{delta.get('pct', 0):.2f}%")
+        with col4:
+            imb_dir = imbalance.get('direction', 'neutral')
+            imb_icon = "🟢" if imb_dir == "bullish" else "🔴" if imb_dir == "bearish" else "⚪"
+            st.metric("失衡方向", f"{imb_icon} {imb_dir}")
+        
+        # CVD信号
+        cvd_signal = cvd.get('signal', 'neutral')
+        cvd_div = cvd.get('divergence', False)
+        if cvd_signal == "bullish":
+            st.success(f"✅ CVD信号: 看涨 {'(检测到背离)' if cvd_div else ''}")
+        elif cvd_signal == "bearish":
+            st.error(f"🔴 CVD信号: 看跌 {'(检测到背离)' if cvd_div else ''}")
+        
+        # 吸收检测
+        absorption = flow.get('absorption', {})
+        if absorption.get('detected'):
+            st.info(f"🔍 检测到吸收行为: {absorption.get('direction')}")
+    
+    st.divider()
+    
+    # === 清算监控 (核心新增) ===
+    st.subheader("💥 清算监控 (Liquidation)")
+    liq = state.liquidation
+    
+    if liq:
+        heatmap = liq.get('heatmap', {})
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("清算级别", liq.get('total_levels', 0))
+        with col2:
+            st.metric("多头清算", f"${heatmap.get('total_long_liq', 0):,.0f}")
+        with col3:
+            st.metric("空头清算", f"${heatmap.get('total_short_liq', 0):,.0f}")
+        with col4:
+            imb_ratio = heatmap.get('imbalance_ratio', 1)
+            imb_dir = heatmap.get('imbalance_direction', 'balanced')
+            imb_icon = "🔴" if imb_dir == "long_heavy" else "🟢" if imb_dir == "short_heavy" else "⚪"
+            st.metric("失衡比", f"{imb_icon} {imb_ratio:.2f}")
+        
+        # 接近的清算警报
+        approaching = liq.get('approaching_alerts', [])
+        if approaching:
+            for alert in approaching[:3]:
+                severity = alert.get('severity', 'low')
+                if severity == 'critical':
+                    st.error(f"🚨 {alert.get('details')}")
+                elif severity == 'high':
+                    st.warning(f"⚠️ {alert.get('details')}")
+                else:
+                    st.info(f"ℹ️ {alert.get('details')}")
+        
+        # 级联风险
+        cascade = liq.get('cascade_risk')
+        if cascade:
+            st.error(f"💥 级联风险: {cascade}")
+    
+    st.divider()
+    
     # === AI 决策解释 ===
     st.subheader("📝 AI 决策解释 (M-35/36)")
     explanation = state.explanation
@@ -385,7 +462,7 @@ def main():
         st.plotly_chart(fig, use_container_width=True)
     
     # 底部
-    st.caption(f"最后更新: {state.timestamp} | 交易所: {state.exchange} | 12层架构 v3.0 + 6大升级")
+    st.caption(f"最后更新: {state.timestamp} | 交易所: {state.exchange} | 12层架构 v3.2 + 机构级模块")
 
 
 if __name__ == "__main__":
