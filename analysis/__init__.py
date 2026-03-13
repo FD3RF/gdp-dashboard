@@ -19,6 +19,17 @@ from .market_regime import (
     StrategyWeights,
     detect_market_regime,
 )
+from .signal_engine import (
+    SignalEngine,
+    SignalAggregator,
+    MetaFilter,
+    AggregatedSignal,
+    ModuleSignal,
+    SignalDirection,
+    SignalStrength,
+    generate_unified_signal,
+    get_signal_engine,
+)
 
 __all__ = [
     "Signal",
@@ -39,4 +50,13 @@ __all__ = [
     "RegimeState",
     "StrategyWeights",
     "detect_market_regime",
+    "SignalEngine",
+    "SignalAggregator",
+    "MetaFilter",
+    "AggregatedSignal",
+    "ModuleSignal",
+    "SignalDirection",
+    "SignalStrength",
+    "generate_unified_signal",
+    "get_signal_engine",
 ]

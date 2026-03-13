@@ -59,6 +59,9 @@ from analysis.risk_matrix import calculate_risk_matrix, RiskMatrix
 # Layer 10: 市场状态识别 (核心新增)
 from analysis.market_regime import MarketRegimeEngine, MarketRegime, detect_market_regime
 
+# Layer 10: 统一信号引擎 (核心新增)
+from analysis.signal_engine import SignalEngine, generate_unified_signal, get_signal_engine
+
 # Layer 11: 解释层
 from explain.signal_explainer import explain_signal
 from explain.signal_history import record_signal, get_signal_reliability
@@ -127,6 +130,9 @@ class SystemState:
     
     # 9. 清算监控 (核心新增)
     liquidation: Dict[str, Any] = field(default_factory=dict)
+    
+    # 10. 统一信号 (核心新增)
+    unified_signal: Dict[str, Any] = field(default_factory=dict)
     
     is_simulated: bool = False
 
@@ -296,44 +302,7 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
         except Exception as e:
             rl_result = {"error": str(e)}
     
-    # === Layer 9: 决策 ===
-    decision = make_decision(probs)
-    plan = generate_trade_plan(df, decision.signal)
-    
-    # === Layer 10: 风险预警 ===
-    risk = risk_warning(df)
-    
-    # === 新增功能 5: 多维风险矩阵 ===
-    risk_matrix_result = calculate_risk_matrix(
-        market_data={
-            "hurst": hurst_value,
-            "fractal_dim": 1.5,
-            "trend": "up" if hurst_value > 0.55 else "down" if hurst_value < 0.45 else "neutral",
-            "orderbook_imbalance": orderbook_analysis.imbalance if hasattr(orderbook_analysis, 'imbalance') else 0,
-            "liquidity_zones": liquidity.get('support_zones', []) + liquidity.get('resistance_zones', []),
-            "trap_detected": len(liquidity.get('trap_warnings', [])) > 0,
-            "volatility": indicators.get('volatility', 0.02),
-            "avg_volatility": indicators.get('avg_volatility', 0.02),
-        },
-        funding_data={
-            "rate": funding_rate or 0,
-            "z_score": funding_extreme_data.get('summary', {}).get('avg_z_score', 0),
-            "crowd_direction": funding_extreme_data.get('summary', {}).get('crowding_direction', 'neutral'),
-        },
-        sentiment_data={
-            "score": sentiment_features.overall_score,
-            "is_extreme": sentiment_features.is_extreme,
-            "extreme_type": sentiment_features.extreme_type,
-        },
-        whale_data={
-            "net_flow": whale_data.get('flow_summary', {}).get('net_flow_eth', 0),
-            "high_impact_count": whale_data.get('high_impact_count', 0),
-            "recent_alerts": whale_data.get('alerts', []),
-        },
-    )
-    
-    # === 新增功能 7: 订单流分析 ===
-    # 从订单簿推算订单流
+    # === 新增功能 7: 订单流分析 (先计算，后面会用到) ===
     try:
         from features.order_flow import OrderFlowAnalyzer
         flow_analyzer = OrderFlowAnalyzer()
@@ -371,11 +340,69 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     except Exception as e:
         order_flow_result = {"error": str(e)}
     
-    # === 新增功能 8: 清算监控 ===
+    # === 新增功能 8: 清算监控 (先计算) ===
     liquidation_result = monitor_liquidations(
         current_price=current_price,
         open_interest=1000000,  # 默认持仓量
     )
+    
+    # === Layer 10: 风险预警 ===
+    risk = risk_warning(df)
+    
+    # === 新增功能 5: 多维风险矩阵 (先计算，Signal Engine 会用到) ===
+    risk_matrix_result = calculate_risk_matrix(
+        market_data={
+            "hurst": hurst_value,
+            "fractal_dim": 1.5,
+            "trend": "up" if hurst_value > 0.55 else "down" if hurst_value < 0.45 else "neutral",
+            "orderbook_imbalance": orderbook_analysis.imbalance if hasattr(orderbook_analysis, 'imbalance') else 0,
+            "liquidity_zones": liquidity.get('support_zones', []) + liquidity.get('resistance_zones', []),
+            "trap_detected": len(liquidity.get('trap_warnings', [])) > 0,
+            "volatility": indicators.get('volatility', 0.02),
+            "avg_volatility": indicators.get('avg_volatility', 0.02),
+        },
+        funding_data={
+            "rate": funding_rate or 0,
+            "z_score": funding_extreme_data.get('summary', {}).get('avg_z_score', 0),
+            "crowd_direction": funding_extreme_data.get('summary', {}).get('crowding_direction', 'neutral'),
+        },
+        sentiment_data={
+            "score": sentiment_features.overall_score,
+            "is_extreme": sentiment_features.is_extreme,
+            "extreme_type": sentiment_features.extreme_type,
+        },
+        whale_data={
+            "net_flow": whale_data.get('flow_summary', {}).get('net_flow_eth', 0),
+            "high_impact_count": whale_data.get('high_impact_count', 0),
+            "recent_alerts": whale_data.get('alerts', []),
+        },
+    )
+    
+    # === 新增功能 6: 统一信号引擎 (核心) ===
+    signal_engine = get_signal_engine()
+    unified_signal_result = generate_unified_signal(
+        hurst=hurst_value,
+        momentum=indicators.get('momentum', 0),
+        imbalance=orderbook_analysis.imbalance if hasattr(orderbook_analysis, 'imbalance') else 0,
+        whale_flow=whale_data.get('flow_summary', {}).get('net_flow_eth', 0),
+        funding_rate=funding_rate or 0,
+        cvd=order_flow_result.get('cvd', {}).get('value', 0) if order_flow_result else 0,
+        sentiment=sentiment_features.overall_score,
+        regime=regime_result.get('regime', 'neutral'),
+        regime_confidence=regime_result.get('confidence', 0.5),
+        risk_score=risk_matrix_result.get('score', 30),
+    )
+    
+    # 使用统一信号覆盖概率（如果 Meta Filter 通过）
+    if unified_signal_result.get('meta_filter', {}).get('passed', False):
+        probs['long'] = unified_signal_result.get('probabilities', {}).get('long', probs['long'])
+        probs['short'] = unified_signal_result.get('probabilities', {}).get('short', probs['short'])
+        probs['hold'] = unified_signal_result.get('probabilities', {}).get('hold', probs['hold'])
+        probs['confidence'] = unified_signal_result.get('confidence', probs['confidence'])
+    
+    # === Layer 9: 决策 ===
+    decision = make_decision(probs)
+    plan = generate_trade_plan(df, decision.signal)
     
     # === Layer 11: 解释 ===
     explanation = explain_signal(
@@ -466,6 +493,7 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
         market_regime=regime_result,
         order_flow=order_flow_result,
         liquidation=liquidation_result,
+        unified_signal=unified_signal_result,
         is_simulated=is_simulated
     )
 

@@ -437,6 +437,51 @@ def main():
     
     st.divider()
     
+    # === 统一信号引擎 (核心新增) ===
+    st.subheader("🎯 统一信号引擎 (Signal Engine)")
+    unified = state.unified_signal
+    
+    if unified:
+        direction = unified.get('direction', 'neutral')
+        confidence = unified.get('confidence', 0)
+        meta = unified.get('meta_filter', {})
+        votes = unified.get('votes', {})
+        quality = unified.get('quality_metrics', {})
+        
+        # 信号方向
+        dir_icons = {
+            "long": "🟢 做多",
+            "short": "🔴 做空",
+            "neutral": "⚪ 观望"
+        }
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("统一信号", dir_icons.get(direction, direction))
+        with col2:
+            st.metric("置信度", f"{confidence:.1f}")
+        with col3:
+            votes_text = f"↑{votes.get('long', 0)} ↓{votes.get('short', 0)} ↔{votes.get('neutral', 0)}"
+            st.metric("模块投票", votes_text)
+        with col4:
+            passed = meta.get('passed', False)
+            st.metric("Meta Filter", "✅ 通过" if passed else "⚠️ 过滤")
+        
+        # 信号质量
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric("信号一致性", f"{quality.get('consistency', 0)*100:.0f}%")
+        with c2:
+            st.metric("信号质量", f"{quality.get('quality', 0)*100:.0f}%")
+        
+        # Meta Filter 详情
+        if not meta.get('passed', True):
+            st.warning(f"🔍 Meta Filter: {meta.get('reason', '信号被过滤')}")
+        else:
+            st.success("✅ 统一信号引擎验证通过")
+    
+    st.divider()
+    
     # === AI 决策解释 ===
     st.subheader("📝 AI 决策解释 (M-35/36)")
     explanation = state.explanation
