@@ -126,10 +126,14 @@ class AlertEngine:
     └────────────┴────────────────────────────────────────────────────────────┘
     """
     
-    # 预警阈值 - 价格关键位
-    PRICE_INFO_THRESHOLD = 0.02      # 2% - INFO
-    PRICE_WARNING_THRESHOLD = 0.015  # 1.5% - WARNING起点
-    PRICE_CRITICAL_THRESHOLD = 0.005 # 0.5% - CRITICAL起点
+    # 预警阈值 - 价格关键位（调整：避免过度敏感）
+    # ETH 5分钟波动通常 0.3%-0.8%，预警阈值应高于正常波动
+    PRICE_INFO_THRESHOLD = 0.015      # 1.5% - INFO（原2%，降低最大范围）
+    PRICE_WARNING_THRESHOLD = 0.008  # 0.8% - WARNING起点（原1.5%）
+    PRICE_CRITICAL_THRESHOLD = 0.004 # 0.4% - CRITICAL起点（原0.5%）
+    
+    # 最小预警距离：低于此距离不触发预警（避免噪声）
+    MIN_ALERT_DISTANCE = 0.003  # 0.3% - 最小预警距离
     
     # 预警阈值 - 清算墙
     LIQUIDATION_INFO_THRESHOLD = 0.01      # 1% - INFO
@@ -278,6 +282,10 @@ class AlertEngine:
             total_strength = sum(data["strengths"])
             distance_pct = abs(current_price - price) / current_price
             
+            # 过滤：距离太近的预警（可能是噪声）
+            if distance_pct < self.MIN_ALERT_DISTANCE:
+                continue  # 跳过太近的预警
+            
             if distance_pct < self.PRICE_INFO_THRESHOLD:
                 severity = self._determine_price_severity(distance_pct, max_strength)
                 
@@ -323,6 +331,10 @@ class AlertEngine:
             max_strength = data["max_strength"]
             total_strength = sum(data["strengths"])
             distance_pct = abs(current_price - price) / current_price
+            
+            # 过滤：距离太近的预警（可能是噪声）
+            if distance_pct < self.MIN_ALERT_DISTANCE:
+                continue  # 跳过太近的预警
             
             if distance_pct < self.PRICE_INFO_THRESHOLD:
                 severity = self._determine_price_severity(distance_pct, max_strength)
