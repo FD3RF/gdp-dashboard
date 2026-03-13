@@ -149,6 +149,22 @@ class AlertEngine:
         self.alerts: List[Alert] = []
         self.max_alerts = 50
         self._callbacks: List[Callable] = []
+        
+        # Telegram 通知器
+        self._telegram_enabled = False
+        self._init_telegram()
+    
+    def _init_telegram(self):
+        """初始化 Telegram 通知"""
+        try:
+            from infrastructure.telegram_notify import get_notifier
+            self._telegram = get_notifier()
+            if self._telegram.config.enabled:
+                self._telegram_enabled = True
+                logger.info("Telegram notifications enabled")
+        except Exception as e:
+            logger.debug(f"Telegram not available: {e}")
+            self._telegram = None
     
     def register_callback(self, callback: Callable):
         """注册回调"""
@@ -171,6 +187,10 @@ class AlertEngine:
         # 触发回调
         self._trigger_callbacks(alert)
         
+        # Telegram 推送 (仅 CRITICAL 和 EMERGENCY)
+        if self._telegram_enabled and alert.severity in [AlertSeverity.CRITICAL, AlertSeverity.EMERGENCY]:
+            self._send_telegram_alert(alert)
+        
         # 日志
         if alert.severity == AlertSeverity.EMERGENCY:
             logger.critical(f"🚨 {alert.title}: {alert.message}")
@@ -178,6 +198,26 @@ class AlertEngine:
             logger.warning(f"⚠️ {alert.title}: {alert.message}")
         else:
             logger.info(f"ℹ️ {alert.title}: {alert.message}")
+    
+    def _send_telegram_alert(self, alert: Alert):
+        """发送 Telegram 预警"""
+        try:
+            import asyncio
+            alert_dict = alert.to_dict()
+            
+            # 异步发送
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # 如果循环正在运行，创建任务
+                    asyncio.create_task(self._telegram.send_alert(alert_dict))
+                else:
+                    loop.run_until_complete(self._telegram.send_alert(alert_dict))
+            except RuntimeError:
+                # 没有事件循环，创建新的
+                asyncio.run(self._telegram.send_alert(alert_dict))
+        except Exception as e:
+            logger.debug(f"Failed to send Telegram alert: {e}")
     
     def _determine_price_severity(self, distance_pct: float, strength: float) -> AlertSeverity:
         """
