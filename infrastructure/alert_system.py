@@ -36,6 +36,28 @@ class AlertSeverity(Enum):
     WARNING = "warning"
     CRITICAL = "critical"
     EMERGENCY = "emergency"
+    
+    @property
+    def color(self) -> str:
+        """获取预警级别对应的颜色"""
+        colors = {
+            "info": "#4caf50",      # 绿色
+            "warning": "#ff9800",   # 橙色
+            "critical": "#f44336",  # 红色
+            "emergency": "#9c27b0", # 紫色（紧急）
+        }
+        return colors.get(self.value, "#9e9e9e")
+    
+    @property
+    def icon(self) -> str:
+        """获取预警级别对应的图标"""
+        icons = {
+            "info": "🟢",
+            "warning": "🟡",
+            "critical": "🔴",
+            "emergency": "🚨",
+        }
+        return icons.get(self.value, "📍")
 
 
 @dataclass
@@ -49,10 +71,20 @@ class Alert:
     timestamp: datetime = field(default_factory=datetime.now)
     acknowledged: bool = False
     
+    @property
+    def color(self) -> str:
+        return self.severity.color
+    
+    @property
+    def icon(self) -> str:
+        return self.severity.icon
+    
     def to_dict(self) -> Dict:
         return {
             "type": self.alert_type.value,
             "severity": self.severity.value,
+            "severity_color": self.color,
+            "severity_icon": self.icon,
             "title": self.title,
             "message": self.message,
             "details": self.details,

@@ -245,10 +245,14 @@ class UnifiedDecisionEngine:
         
         hard_filter_dict = hard_result.to_dict()
         
+        # 保存原始置信度（用于显示）
+        original_confidence = final_confidence
+        
         # 硬规则覆盖
         if not hard_result.is_trading_allowed():
             final_action = "HOLD"
-            final_confidence = 0
+            # 注意：保留原始置信度用于显示，不设为0
+            # final_confidence = 0  # 旧逻辑 - 导致显示0%
             final_position = 0
             decision_source = "hard_filter_block"
         
@@ -266,7 +270,7 @@ class UnifiedDecisionEngine:
         
         return UnifiedDecision(
             action=final_action,
-            confidence=calibrated_confidence,
+            confidence=calibrated_confidence,  # 显示原始置信度，即使被拦截
             position_multiplier=final_position,
             decision_source=decision_source,
             signal_engine_result=signal_engine_dict,
