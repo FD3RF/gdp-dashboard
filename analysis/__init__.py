@@ -29,13 +29,17 @@ from .market_regime import (
 from .signal_engine import (
     SignalEngine,
     SignalAggregator,
-    MetaFilter,
     AggregatedSignal,
     ModuleSignal,
     SignalDirection,
     SignalStrength,
     generate_unified_signal,
     get_signal_engine,
+)
+from .unified_filter import (
+    UnifiedFilter,
+    FilterDecision,
+    FilterResult as UnifiedFilterResult,
 )
 from .layered_decision import (
     FourLayerDecisionEngine,
@@ -91,13 +95,16 @@ __all__ = [
     # Signal Engine
     "SignalEngine",
     "SignalAggregator",
-    "MetaFilter",
     "AggregatedSignal",
     "ModuleSignal",
     "SignalDirection",
     "SignalStrength",
     "generate_unified_signal",
     "get_signal_engine",
+    # Unified Filter
+    "UnifiedFilter",
+    "FilterDecision",
+    "UnifiedFilterResult",
     # Layered Decision
     "FourLayerDecisionEngine",
     "FourLayerDecision",
