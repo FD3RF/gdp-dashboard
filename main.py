@@ -44,6 +44,12 @@ from features.funding_extreme import funding_extreme_alert
 from features.order_flow import analyze_order_flow, OrderFlowAnalyzer
 from features.liquidation_monitor import monitor_liquidations
 
+# Layer 5.5: 多时间框架分析 (新增)
+from analysis.multi_timeframe import MultiTimeframeAnalyzer, TimeframeDirection
+
+# Layer 11.5: 交易熔断器 (新增)
+from infrastructure.trading_circuit_breaker import get_circuit_breaker, is_trading_allowed
+
 # Layer 6/7/8: AI分析层
 from ai.probability_model import calculate_probabilities
 
@@ -174,6 +180,15 @@ class SystemState:
     # 15. 预警状态 (新增)
     alert_status: Dict[str, Any] = field(default_factory=dict)
     active_alerts: List[Any] = field(default_factory=list)
+    
+    # 16. 多时间框架分析 (新增)
+    multi_timeframe: Dict[str, Any] = field(default_factory=dict)
+    resonance_score: float = 0.0
+    timeframe_alignment: int = 0
+    
+    # 17. 熔断器状态 (新增)
+    circuit_breaker_status: Dict[str, Any] = field(default_factory=dict)
+    is_circuit_breaker_active: bool = False
     
     is_simulated: bool = False
 
@@ -540,47 +555,105 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     # 准备资金费率数据
     funding_extreme_flag = abs(funding_extreme_data.get('summary', {}).get('avg_z_score', 0)) > 2
     
-    # 执行统一决策
-    unified_decision_result = make_unified_decision(
-        # Signal Engine 参数
-        hurst=hurst_value,
-        momentum=indicators.get('momentum', 0),
-        imbalance=imbalance_value,
-        whale_flow=whale_data.get('flow_summary', {}).get('net_flow_eth', 0),
-        funding_rate=funding_rate or 0,
-        cvd=cvd_value,
-        sentiment=sentiment_features.overall_score,
-        regime=regime_result.get('regime', 'neutral'),
-        regime_confidence=regime_result.get('confidence', 0.5),
-        risk_score=risk_matrix_result.get('score', 30),
-        # 四层决策参数
-        data_quality_score=data_quality_score,
-        current_price=current_price,
-        support_zones=support_zones,
-        resistance_zones=resistance_zones,
-        liquidation_zones=liquidation_zones,
-        funding_extreme=funding_extreme_flag,
-        # 硬规则参数
-        reliability=reliability,
-        trade_plan=plan,
-    )
+    # === 多时间框架分析 (新增) ===
+    try:
+        mtf_analyzer = MultiTimeframeAnalyzer()
+        
+        # 为不同时间框架生成数据（基于当前数据模拟）
+        # 实际使用时应获取真实的不同周期K线
+        data_by_timeframe = {
+            "5m": df,  # 主交易周期
+        }
+        
+        # 模拟其他时间框架数据（实际应从交易所获取）
+        if len(df) >= 60:
+            # 15分钟（3根5分钟K线合并）
+            df_15m = df.iloc[::3].copy()
+            if len(df_15m) >= 20:
+                data_by_timeframe["15m"] = df_15m
+        
+        if len(df) >= 240:
+            # 1小时（12根5分钟K线合并）
+            df_1h = df.iloc[::12].copy()
+            if len(df_1h) >= 20:
+                data_by_timeframe["1h"] = df_1h
+        
+        mtf_result = mtf_analyzer.analyze_all(data_by_timeframe, primary_timeframe="5m")
+        resonance_score = mtf_result.resonance_score
+        timeframe_alignment = mtf_result.alignment_count
+        mtf_confidence_multiplier = mtf_result.confidence_multiplier
+        mtf_conflict = mtf_result.conflict_detected
+    except Exception as e:
+        resonance_score = 0.5
+        timeframe_alignment = 1
+        mtf_confidence_multiplier = 1.0
+        mtf_conflict = False
+        mtf_result = None
     
-    # 获取仓位乘数
-    position_multiplier = unified_decision_result.position_multiplier
+    # === 熔断器检查 (新增) ===
+    circuit_breaker = get_circuit_breaker()
+    circuit_breaker_status = circuit_breaker.get_status()
+    is_circuit_breaker_active = not circuit_breaker.is_trading_allowed()
     
-    # 使用统一决策结果
-    if unified_decision_result.action == "LONG":
-        decision.signal = Signal.LONG
-        probs['long'] = unified_decision_result.confidence
-        probs['hold'] = 100 - unified_decision_result.confidence
-    elif unified_decision_result.action == "SHORT":
-        decision.signal = Signal.SHORT
-        probs['short'] = unified_decision_result.confidence
-        probs['hold'] = 100 - unified_decision_result.confidence
-    else:
+    # 如果熔断器激活，强制观望
+    if is_circuit_breaker_active:
         decision.signal = Signal.HOLD
-        probs['hold'] = max(70, probs['hold'])
+        probs['hold'] = 100
         position_multiplier = 0
+        unified_decision_result = None  # 跳过统一决策
+    
+    else:
+        # 执行统一决策
+        unified_decision_result = make_unified_decision(
+            # Signal Engine 参数
+            hurst=hurst_value,
+            momentum=indicators.get('momentum', 0),
+            imbalance=imbalance_value,
+            whale_flow=whale_data.get('flow_summary', {}).get('net_flow_eth', 0),
+            funding_rate=funding_rate or 0,
+            cvd=cvd_value,
+            sentiment=sentiment_features.overall_score,
+            regime=regime_result.get('regime', 'neutral'),
+            regime_confidence=regime_result.get('confidence', 0.5),
+            risk_score=risk_matrix_result.get('score', 30),
+            # 四层决策参数
+            data_quality_score=data_quality_score,
+            current_price=current_price,
+            support_zones=support_zones,
+            resistance_zones=resistance_zones,
+            liquidation_zones=liquidation_zones,
+            funding_extreme=funding_extreme_flag,
+            # 硬规则参数
+            reliability=reliability,
+            trade_plan=plan,
+        )
+        
+        # 获取仓位乘数
+        position_multiplier = unified_decision_result.position_multiplier
+        
+        # === 应用多时间框架置信度乘数 ===
+        if mtf_confidence_multiplier < 0.5:
+            # 强冲突，放弃信号
+            decision.signal = Signal.HOLD
+            probs['hold'] = 100
+            position_multiplier = 0
+        else:
+            # 应用置信度乘数
+            adjusted_confidence = unified_decision_result.confidence * mtf_confidence_multiplier
+            
+            # 使用统一决策结果
+            if unified_decision_result.action == "LONG":
+                decision.signal = Signal.LONG
+                probs['long'] = adjusted_confidence
+                probs['hold'] = 100 - adjusted_confidence
+            elif unified_decision_result.action == "SHORT":
+                decision.signal = Signal.SHORT
+                probs['short'] = adjusted_confidence
+                probs['hold'] = 100 - adjusted_confidence
+            else:
+                decision.signal = Signal.HOLD
+                probs['hold'] = max(70, probs['hold'])
+                position_multiplier = 0
     
     # 重新生成交易计划（根据仓位调整）
     if decision.signal != Signal.HOLD and position_multiplier > 0:
@@ -788,14 +861,21 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
         risk_filter_status=risk_filter_decision.to_dict(),
         is_trading_allowed=is_trading_allowed,
         # 统一决策状态 (核心整合)
-        unified_decision=unified_decision_result.to_dict(),
+        unified_decision=unified_decision_result.to_dict() if unified_decision_result else {"action": "HOLD", "confidence": 0, "decision_source": "circuit_breaker"},
         position_multiplier=position_multiplier,
-        has_decision_conflict=unified_decision_result.has_conflict,
+        has_decision_conflict=unified_decision_result.has_conflict if unified_decision_result else False,
         # 高级仓位管理 (新增)
         position_sizing=position_sizing_result,
         # 预警状态 (新增)
         alert_status=alert_status,
         active_alerts=active_alerts,
+        # 多时间框架分析 (新增)
+        multi_timeframe=mtf_result.to_dict() if mtf_result else {},
+        resonance_score=resonance_score,
+        timeframe_alignment=timeframe_alignment,
+        # 熔断器状态 (新增)
+        circuit_breaker_status=circuit_breaker_status,
+        is_circuit_breaker_active=is_circuit_breaker_active,
         is_simulated=is_simulated
     )
 
