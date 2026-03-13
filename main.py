@@ -592,22 +592,23 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     
     # === 高级仓位管理（凯利公式 + 动态止损止盈）===
     position_sizing_result = {}
-    if decision.signal != Signal.HOLD:
+    
+    # 准备清算数据（提前定义，预警也需要）
+    liq_zones = []
+    for alert in liquidation_result.get('approaching_alerts', [])[:5]:
+        liq_zones.append({
+            'price': alert.get('price', 0),
+            'direction': alert.get('direction', 'unknown'),
+            'amount': alert.get('amount', 0),
+        })
+    
+     if decision.signal != Signal.HOLD:
         try:
             # 获取历史统计
             perf = evolution_data.get('recent_performance', {})
             win_rate = perf.get('win_rate', 0.5)
             avg_win = perf.get('avg_win_percent', 2.0)
             avg_loss = perf.get('avg_loss_percent', 2.0)
-            
-            # 准备清算数据
-            liq_zones = []
-            for alert in liquidation_result.get('approaching_alerts', [])[:5]:
-                liq_zones.append({
-                    'price': alert.get('price', 0),
-                    'direction': alert.get('direction', 'unknown'),
-                    'amount': alert.get('amount', 0),
-                })
             
             # 计算最优仓位
             direction = "long" if decision.signal == Signal.LONG else "short"

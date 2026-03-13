@@ -72,8 +72,8 @@ class AlertEngine:
     """
     
     # 预警阈值
-    PRICE_PROXIMITY_THRESHOLD = 0.005  # 0.5%距离触发
-    LIQUIDATION_PROXIMITY_THRESHOLD = 0.003  # 0.3%距离触发
+    PRICE_PROXIMITY_THRESHOLD = 0.01  # 1%距离触发（扩大范围）
+    LIQUIDATION_PROXIMITY_THRESHOLD = 0.005  # 0.5%距离触发
     BLACK_SWAN_VOLATILITY = 0.05  # 5%波动
     
     def __init__(self):

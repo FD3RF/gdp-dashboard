@@ -1,8 +1,8 @@
 # ui/dashboard.py
 """
-Layer 12: 可视化盯盘层 v5.0
+Layer 12: 可视化盯盘层 v5.1
 ===========================
-信息分层 + 三栏布局 + 颜色规范
+信息分层 + 自动刷新 + 预警显示 + 置信度统一
 """
 
 import streamlit as st
@@ -20,7 +20,7 @@ from analysis.decision_maker import Signal
 
 # 页面配置
 st.set_page_config(
-    page_title="ETH AI Agent v5.0",
+    page_title="ETH AI Agent v5.1",
     page_icon="🧠",
     layout="wide",
     initial_sidebar_state="collapsed"  # 默认收起侧边栏
@@ -75,7 +75,12 @@ def render_final_decision(state):
     第一层：最终决策（最显眼）
     """
     signal = state.signal
-    confidence = state.probabilities.get('confidence', 0)
+    
+    # 统一使用统一决策引擎的置信度
+    ud = state.unified_decision
+    confidence = ud.get('confidence', state.probabilities.get('confidence', 0))
+    decision_source = ud.get('decision_source', 'unknown')
+    
     reliability = state.reliability.get('score', 0)
     position = state.position_multiplier
     
@@ -95,7 +100,10 @@ def render_final_decision(state):
     <div style="background-color: {bg_color}; padding: 20px; border-radius: 10px; text-align: center;">
         <h1 style="color: white; margin: 0; font-size: 48px;">{decision_text}</h1>
         <p style="color: #ccc; font-size: 16px; margin: 10px 0 0 0;">
-            置信度 {confidence:.0f}% | 可靠度 {reliability}/100 | 仓位 {position*100:.0f}%
+            置信度 {confidence:.1f}% | 可靠度 {reliability}/100 | 仓位 {position*100:.0f}%
+        </p>
+        <p style="color: #999; font-size: 12px; margin: 5px 0 0 0;">
+            来源: {decision_source}
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -280,16 +288,59 @@ def render_raw_data(state):
             st.caption(f"过期特征: {stale} 个")
 
 
-def main():
-    """主函数 - v5.0 信息分层版"""
+def render_alerts(state):
+    """
+    预警面板
+    """
+    alerts = state.active_alerts
     
-    # 侧边栏（简化）
+    if not alerts:
+        return
+    
+    st.markdown("### 🚨 实时预警")
+    
+    for alert in alerts[:5]:
+        severity = alert.get('severity', 'info')
+        title = alert.get('title', '')
+        message = alert.get('message', '')
+        
+        if severity == 'emergency':
+            st.error(f"🚨 {title}: {message}")
+        elif severity == 'critical':
+            st.warning(f"⚠️ {title}: {message}")
+        else:
+            st.info(f"ℹ️ {title}: {message}")
+
+
+def main():
+    """主函数 - v5.1 自动刷新 + 预警"""
+    
+    # 侧边栏
     with st.sidebar:
         symbol = st.selectbox("交易对", ["ETH/USDT", "BTC/USDT"])
         data_source = st.radio("数据源", ["自动", "模拟"])
         use_simulated = data_source == "模拟"
-        if st.button("🔄 刷新"):
+        
+        # 自动刷新
+        auto_refresh = st.checkbox("自动刷新", value=False)
+        refresh_interval = st.slider("刷新间隔(秒)", 10, 120, 30)
+        
+        if st.button("🔄 立即刷新"):
             st.rerun()
+    
+    # 自动刷新逻辑
+    if auto_refresh:
+        import time
+        time.sleep(0.1)
+        st.empty()
+        # 使用streamlit的自动刷新
+        st.markdown(f"""
+        <script>
+            setTimeout(function() {{
+                window.location.reload();
+            }}, {refresh_interval * 1000});
+        </script>
+        """, unsafe_allow_html=True)
     
     # 获取数据
     with st.spinner("分析中..."):
@@ -302,6 +353,9 @@ def main():
     # 数据源状态
     if state.is_simulated:
         st.info("ℹ️ 模拟数据模式")
+    
+    # === 预警面板（如果有预警）===
+    render_alerts(state)
     
     # === 第一层：最终决策 ===
     render_final_decision(state)
