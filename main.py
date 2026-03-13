@@ -25,6 +25,9 @@ from data.social_stream import social_sentiment_score
 # Layer 3/4: 数据处理与融合
 from data.kline_builder import calculate_indicators, get_latest_indicators
 
+# Layer 2.5: 特征时间同步层 (核心修复)
+from data.feature_sync import get_feature_sync, sync_features, FeatureMatrix
+
 # Layer 5: 特征工程层
 from features.orderbook_features import OrderbookAnalyzer
 from features.hurst import HurstExponent
@@ -134,6 +137,10 @@ class SystemState:
     # 10. 统一信号 (核心新增)
     unified_signal: Dict[str, Any] = field(default_factory=dict)
     
+    # 11. 特征同步状态 (核心修复)
+    feature_sync_status: Dict[str, Any] = field(default_factory=dict)
+    data_quality_score: float = 1.0
+    
     is_simulated: bool = False
 
 
@@ -148,6 +155,9 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     Returns:
         SystemState 或 None
     """
+    # === Layer 2.5: 初始化特征同步层 ===
+    feature_sync = get_feature_sync()
+    
     # === Layer 2: 数据采集 ===
     df, current_price = get_realtime_eth_data(symbol, use_simulated=use_simulated)
     
@@ -166,6 +176,13 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     df = calculate_indicators(df)
     indicators = get_latest_indicators(df)
     
+    # === 同步特征: K线数据 ===
+    feature_sync.update_feature("price", current_price, "kline")
+    feature_sync.update_feature("volume", indicators.get('volume', 0), "kline")
+    feature_sync.update_feature("rsi", indicators.get('rsi14', 50), "indicator")
+    feature_sync.update_feature("momentum", indicators.get('momentum', 0), "indicator")
+    feature_sync.update_feature("volatility", indicators.get('volatility', 0.02), "indicator")
+    
     # === Layer 5: 特征工程 ===
     # 订单簿分析
     orderbook_data = get_orderbook_data(symbol, limit=50)
@@ -177,10 +194,19 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
             'bids': orderbook_data.get('bids', []),
             'asks': orderbook_data.get('asks', [])
         })
+        # 同步订单簿特征
+        feature_sync.update_feature(
+            "orderbook_imbalance", 
+            orderbook_analysis.imbalance if hasattr(orderbook_analysis, 'imbalance') else 0,
+            "orderbook"
+        )
     
     # Hurst指数
     hurst_calc = HurstExponent()
     hurst_value, hurst_state = hurst_calc.calculate(df['close'].values)
+    
+    # 同步 Hurst 特征
+    feature_sync.update_feature("hurst", hurst_value, "indicator")
     
     # 流动性热图
     liquidity = generate_liquidity_heatmap({
@@ -192,17 +218,35 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     funding_rate = get_funding_rate(symbol)
     funding = analyze_funding_rate(funding_rate)
     
+    # 同步资金费率特征
+    if funding_rate is not None:
+        feature_sync.update_feature("funding_rate", funding_rate, "funding_rate")
+    
     # === 新增功能 1: 链上巨鲸监控 ===
     whale_data = whale_alert(current_price)
+    
+    # 同步巨鲸流动特征
+    feature_sync.update_feature(
+        "whale_flow",
+        whale_data.get('flow_summary', {}).get('net_flow_eth', 0),
+        "whale"
+    )
     
     # === 新增功能 2: 社交情绪分析 ===
     sentiment_data = social_sentiment_score()
     sentiment_features = get_sentiment_features(sentiment_data)
     
+    # 同步情绪特征
+    feature_sync.update_feature("sentiment", sentiment_features.overall_score, "sentiment")
+    
     # === 新增功能 3: 多交易所资金费率极值 ===
     funding_extreme_data = funding_extreme_alert()
     
-    # === Layer 6/7/8: AI分析 ===
+    # === 生成同步的特征矩阵 (核心修复) ===
+    feature_matrix = feature_sync.sync_to_timestamp()
+    data_quality_score = feature_sync.get_data_quality_score()
+    
+    # === Layer 6/7/8: AI分析 (使用同步特征) ===
     probs = calculate_probabilities(df)
     
     # 融合订单簿和资金费率到概率
@@ -337,6 +381,11 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
                 )
         
         order_flow_result = flow_analyzer.get_order_flow_summary()
+        
+        # 同步订单流特征
+        cvd_value = order_flow_result.get('cvd', {}).get('value', 0)
+        feature_sync.update_feature("cvd", cvd_value, "order_flow")
+        
     except Exception as e:
         order_flow_result = {"error": str(e)}
     
@@ -345,6 +394,16 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
         current_price=current_price,
         open_interest=1000000,  # 默认持仓量
     )
+    
+    # === 同步清算特征 ===
+    feature_sync.update_feature(
+        "liquidation",
+        liquidation_result.get('heatmap', {}).get('imbalance_ratio', 1.0),
+        "liquidation"
+    )
+    
+    # === 同步市场状态特征 ===
+    feature_sync.update_feature("regime", regime_result.get('regime', 'neutral'), "regime")
     
     # === Layer 10: 风险预警 ===
     risk = risk_warning(df)
@@ -454,6 +513,10 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     except Exception:
         pass  # 事件发布失败不影响主流程
     
+    # === 获取特征同步状态 (核心修复) ===
+    feature_sync_status = feature_sync.get_sync_status()
+    data_quality_score = feature_sync.get_data_quality_score()
+    
     return SystemState(
         symbol=symbol,
         timestamp=str(df['timestamp'].iloc[-1]) if len(df) > 0 else str(datetime.now()),
@@ -494,6 +557,9 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
         order_flow=order_flow_result,
         liquidation=liquidation_result,
         unified_signal=unified_signal_result,
+        # 特征同步状态 (核心修复)
+        feature_sync_status=feature_sync_status,
+        data_quality_score=data_quality_score,
         is_simulated=is_simulated
     )
 

@@ -17,6 +17,13 @@ from .social_stream import (
     SocialPost,
     social_sentiment_score,
 )
+from .feature_sync import (
+    FeatureSyncLayer,
+    FeatureMatrix,
+    TimestampedFeature,
+    get_feature_sync,
+    sync_features,
+)
 
 __all__ = [
     "MultiExchangeManager",
@@ -31,4 +38,10 @@ __all__ = [
     "SentimentAnalyzer",
     "SocialPost",
     "social_sentiment_score",
+    # 特征同步层
+    "FeatureSyncLayer",
+    "FeatureMatrix",
+    "TimestampedFeature",
+    "get_feature_sync",
+    "sync_features",
 ]

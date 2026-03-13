@@ -482,6 +482,52 @@ def main():
     
     st.divider()
     
+    # === 特征时间同步状态 (核心修复) ===
+    st.subheader("⏱️ 特征时间同步 (Feature Sync)")
+    
+    # 数据质量分数
+    quality_score = state.data_quality_score
+    quality_color = "green" if quality_score > 0.8 else "yellow" if quality_score > 0.6 else "red"
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("数据质量分数", f"{quality_score*100:.1f}%", 
+                  delta="良好" if quality_score > 0.7 else "需优化")
+        st.progress(quality_score)
+    
+    with col2:
+        # 过期特征列表
+        sync_status = state.feature_sync_status
+        stale_features = sync_status.get('stale_features', [])
+        if stale_features:
+            st.warning(f"⚠️ 过期特征: {len(stale_features)} 个")
+            for f in stale_features[:5]:
+                st.caption(f"• {f}")
+        else:
+            st.success("✅ 所有特征都是新鲜的")
+    
+    # 数据源状态表
+    st.markdown("**📊 数据源时间状态**")
+    source_status = sync_status.get('source_status', {})
+    
+    cols = st.columns(min(5, len(source_status)))
+    for i, (source, status) in enumerate(list(source_status.items())[:5]):
+        with cols[i]:
+            age = status.get('age_seconds')
+            threshold = status.get('threshold', 0)
+            is_stale = status.get('is_stale', True)
+            
+            icon = "🟢" if not is_stale else "🔴"
+            age_str = f"{age:.0f}s" if age else "N/A"
+            
+            st.metric(
+                f"{icon} {source[:8]}", 
+                age_str,
+                delta=f"阈值 {threshold}s"
+            )
+    
+    st.divider()
+    
     # === AI 决策解释 ===
     st.subheader("📝 AI 决策解释 (M-35/36)")
     explanation = state.explanation
@@ -509,7 +555,7 @@ def main():
         st.plotly_chart(fig, use_container_width=True)
     
     # 底部
-    st.caption(f"最后更新: {state.timestamp} | 交易所: {state.exchange} | 12层架构 v3.2 + 机构级模块")
+    st.caption(f"最后更新: {state.timestamp} | 交易所: {state.exchange} | 12层架构 v3.3 + 特征时间同步层")
 
 
 if __name__ == "__main__":
