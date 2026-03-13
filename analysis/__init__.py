@@ -38,13 +38,14 @@ from .signal_engine import (
     get_signal_engine,
 )
 from .layered_decision import (
-    LayeredDecisionEngine,
-    LayeredDecision,
+    FourLayerDecisionEngine,
+    FourLayerDecision,
     LayerResult,
     DecisionLayer,
     Direction,
-    get_layered_engine,
-    make_layered_decision,
+    PositionSize,
+    get_four_layer_engine,
+    make_four_layer_decision,
 )
 
 __all__ = [
@@ -84,11 +85,12 @@ __all__ = [
     "generate_unified_signal",
     "get_signal_engine",
     # Layered Decision
-    "LayeredDecisionEngine",
-    "LayeredDecision",
+    "FourLayerDecisionEngine",
+    "FourLayerDecision",
     "LayerResult",
     "DecisionLayer",
     "Direction",
-    "get_layered_engine",
-    "make_layered_decision",
+    "PositionSize",
+    "get_four_layer_engine",
+    "make_four_layer_decision",
 ]
