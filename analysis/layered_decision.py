@@ -340,6 +340,7 @@ class FourLayerDecisionEngine:
         return LayerResult(
             layer=DecisionLayer.RISK_CONTROL,
             passed=passed,
+            confidence=0.5 if passed else 0.3,  # 风控层置信度：通过=50%，不通过=30%
             reason="; ".join(reasons) if reasons else "风控检查通过",
             details={
                 "data_quality": data_quality_score,
