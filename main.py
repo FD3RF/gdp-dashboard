@@ -68,6 +68,9 @@ from analysis.market_regime import MarketRegimeEngine, MarketRegime, detect_mark
 # Layer 10: 统一信号引擎 (核心新增)
 from analysis.signal_engine import SignalEngine, generate_unified_signal, get_signal_engine
 
+# Layer 10: 三层决策引擎 (核心新增)
+from analysis.layered_decision import make_layered_decision, get_layered_engine, LayeredDecision
+
 # Layer 11: 解释层
 from explain.signal_explainer import explain_signal
 from explain.signal_history import record_signal, get_signal_reliability
@@ -147,6 +150,9 @@ class SystemState:
     # 12. 风险过滤状态 (核心新增)
     risk_filter_status: Dict[str, Any] = field(default_factory=dict)
     is_trading_allowed: bool = True
+    
+    # 13. 三层决策状态 (核心新增)
+    layered_decision: Dict[str, Any] = field(default_factory=dict)
     
     is_simulated: bool = False
 
@@ -497,13 +503,56 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     )
     is_trading_allowed = risk_filter_decision.is_trading_allowed()
     
-    # 如果被过滤，强制改为HOLD
-    if not is_trading_allowed and decision.signal != Signal.HOLD:
+    # === 核心新增: 三层决策引擎 ===
+    # 准备流动性数据
+    support_zones = [(z[0], z[1]) for z in liquidity.get('support_zones', [])[:3]]
+    resistance_zones = [(z[0], z[1]) for z in liquidity.get('resistance_zones', [])[:3]]
+    cvd_value = order_flow_result.get('cvd', {}).get('value', 0) if order_flow_result else 0
+    imbalance_value = orderbook_analysis.imbalance if hasattr(orderbook_analysis, 'imbalance') else 0
+    
+    # 执行三层决策
+    layered_decision_result = make_layered_decision(
+        data_quality_score=data_quality_score,
+        meta_filter_passed=unified_signal_result.get('meta_filter', {}).get('passed', True),
+        risk_score=risk_matrix_result.get('score', 30),
+        regime=regime_result.get('regime', 'neutral'),
+        regime_confidence=regime_result.get('confidence', 0.5),
+        hurst=hurst_value,
+        current_price=current_price,
+        support_zones=support_zones,
+        resistance_zones=resistance_zones,
+        cvd=cvd_value,
+        delta=order_flow_result.get('delta', {}).get('value', 0) if order_flow_result else 0,
+        orderbook_imbalance=imbalance_value,
+        momentum=indicators.get('momentum', 0),
+        whale_flow=whale_data.get('flow_summary', {}).get('net_flow_eth', 0),
+    )
+    
+    # 使用三层决策覆盖原决策
+    if is_trading_allowed:
+        # 如果风控通过，使用三层决策
+        if layered_decision_result.final_action == "LONG":
+            decision.signal = Signal.LONG
+            probs['long'] = layered_decision_result.confidence
+            probs['hold'] = 100 - layered_decision_result.confidence
+        elif layered_decision_result.final_action == "SHORT":
+            decision.signal = Signal.SHORT
+            probs['short'] = layered_decision_result.confidence
+            probs['hold'] = 100 - layered_decision_result.confidence
+        else:
+            decision.signal = Signal.HOLD
+            probs['hold'] = max(70, probs['hold'])
+        
+        # 重新生成交易计划
+        if decision.signal != Signal.HOLD:
+            plan = generate_trade_plan(df, decision.signal)
+    else:
+        # 如果被风控过滤，强制改为HOLD
         decision.signal = Signal.HOLD
         probs['hold'] = max(70, probs['hold'])
         probs['long'] = min(15, probs['long'])
         probs['short'] = min(15, probs['short'])
-        plan = None  # 取消交易计划
+        plan = None
     
     # === 新增功能 6: 进化状态 ===
     evolution_data = get_evolution_status()
@@ -593,6 +642,8 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
         # 风险过滤状态 (核心修复)
         risk_filter_status=risk_filter_decision.to_dict(),
         is_trading_allowed=is_trading_allowed,
+        # 三层决策状态 (核心新增)
+        layered_decision=layered_decision_result.to_dict(),
         is_simulated=is_simulated
     )
 

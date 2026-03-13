@@ -579,6 +579,50 @@ def main():
     
     st.divider()
     
+    # === 三层决策状态 (核心新增) ===
+    st.subheader("🎯 三层决策引擎")
+    ld = state.layered_decision
+    
+    if ld:
+        final_action = ld.get('final_action', 'HOLD')
+        primary_dir = ld.get('primary_direction', 'neutral')
+        entry_confirmed = ld.get('entry_confirmed', False)
+        entry_reason = ld.get('entry_reason', '')
+        
+        # 最终决策
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            action_icon = "🟢" if final_action == "LONG" else "🔴" if final_action == "SHORT" else "⚪"
+            st.metric("最终决策", f"{action_icon} {final_action}")
+        with col2:
+            dir_icon = "📈" if primary_dir == "long" else "📉" if primary_dir == "short" else "➡️"
+            st.metric("主方向", f"{dir_icon} {primary_dir}")
+        with col3:
+            st.metric("入场确认", "✅ 是" if entry_confirmed else "⏳ 等待")
+        
+        # 决策原因
+        if final_action == "HOLD":
+            st.info(f"📋 观望原因: {entry_reason}")
+        
+        # 各层详情
+        layers = ld.get('layers', {})
+        cols = st.columns(3)
+        layer_names = ['risk', 'direction', 'entry']
+        layer_titles = ['第一层(风控)', '第二层(方向)', '第三层(入场)']
+        
+        for i, (name, title) in enumerate(zip(layer_names, layer_titles)):
+            with cols[i]:
+                info = layers.get(name, {})
+                passed = info.get('passed', False)
+                icon = "✅" if passed else "❌"
+                st.markdown(f"**{icon} {title}**")
+                reason = info.get('reason', '')
+                if len(reason) > 40:
+                    reason = reason[:40] + "..."
+                st.caption(reason)
+    
+    st.divider()
+    
     # === K线图 ===
     st.subheader("📈 K线图")
     from data.market_stream import get_realtime_eth_data
@@ -591,7 +635,7 @@ def main():
         st.plotly_chart(fig, use_container_width=True)
     
     # 底部
-    st.caption(f"最后更新: {state.timestamp} | 交易所: {state.exchange} | 12层架构 v3.4 + 硬规则风险过滤")
+    st.caption(f"最后更新: {state.timestamp} | 交易所: {state.exchange} | 12层架构 v3.5 + 三层决策引擎")
 
 
 if __name__ == "__main__":

@@ -37,6 +37,15 @@ from .signal_engine import (
     generate_unified_signal,
     get_signal_engine,
 )
+from .layered_decision import (
+    LayeredDecisionEngine,
+    LayeredDecision,
+    LayerResult,
+    DecisionLayer,
+    Direction,
+    get_layered_engine,
+    make_layered_decision,
+)
 
 __all__ = [
     "Signal",
@@ -74,4 +83,12 @@ __all__ = [
     "SignalStrength",
     "generate_unified_signal",
     "get_signal_engine",
+    # Layered Decision
+    "LayeredDecisionEngine",
+    "LayeredDecision",
+    "LayerResult",
+    "DecisionLayer",
+    "Direction",
+    "get_layered_engine",
+    "make_layered_decision",
 ]
