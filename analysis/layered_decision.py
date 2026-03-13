@@ -174,8 +174,6 @@ class FourLayerDecisionEngine:
         # 第一层参数
         data_quality_score: float,
         risk_score: float,
-        reliability: Dict = None,
-        confidence: float = 0,
         
         # 第二层参数（趋势）
         regime: str,
@@ -201,6 +199,9 @@ class FourLayerDecisionEngine:
         # 额外参数
         momentum: float = 0,
         whale_flow: float = 0,
+        # 可选参数
+        reliability: Dict = None,
+        confidence: float = 0,
     ) -> FourLayerDecision:
         """
         执行四层决策
@@ -211,8 +212,8 @@ class FourLayerDecisionEngine:
         risk_layer = self._layer1_risk_control(
             data_quality_score=data_quality_score,
             risk_score=risk_score,
-            reliability=reliability,
-            confidence=confidence,
+            reliability=None,  # 简化：不再在此层检查可靠度
+            confidence=0,  # 简化：不再在此层检查置信度
         )
         
         if not risk_layer.passed:
@@ -710,7 +711,6 @@ def get_four_layer_engine() -> FourLayerDecisionEngine:
 
 def make_four_layer_decision(
     data_quality_score: float,
-    meta_filter_passed: bool,
     risk_score: float,
     regime: str,
     regime_confidence: float,
@@ -733,7 +733,6 @@ def make_four_layer_decision(
     engine = get_four_layer_engine()
     return engine.make_decision(
         data_quality_score=data_quality_score,
-        meta_filter_passed=meta_filter_passed,
         risk_score=risk_score,
         regime=regime,
         regime_confidence=regime_confidence,

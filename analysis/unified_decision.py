@@ -169,7 +169,7 @@ class UnifiedDecisionEngine:
                 "short": signal_result.short_votes,
                 "neutral": signal_result.neutral_votes,
             },
-            "meta_passed": signal_result.meta_filter_passed,
+            "signal_quality": signal_result.signal_quality,
         }
         
         # === Step 2: 四层决策 ===
@@ -177,7 +177,6 @@ class UnifiedDecisionEngine:
         
         four_layer = make_four_layer_decision(
             data_quality_score=data_quality_score,
-            meta_filter_passed=signal_result.meta_filter_passed,
             risk_score=risk_score,
             regime=regime,
             regime_confidence=regime_confidence,
