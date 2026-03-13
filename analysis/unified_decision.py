@@ -8,6 +8,7 @@
 2. 四层决策提供主方向和入场判断
 3. 硬规则过滤器覆盖所有层级
 4. 最终输出唯一决策
+5. 置信度校准确保概率准确性
 """
 
 from typing import Dict, Any, Optional, List, Tuple
@@ -21,6 +22,20 @@ from .layered_decision import FourLayerDecision, PositionSize, Direction
 from .risk_filter import HardRiskFilter, FilterResult
 
 logger = logging.getLogger(__name__)
+
+# 置信度校准器（延迟导入避免循环依赖）
+_calibrator = None
+
+def _get_calibrator():
+    """获取校准器（延迟导入）"""
+    global _calibrator
+    if _calibrator is None:
+        try:
+            from ai.confidence_calibration import get_calibrator
+            _calibrator = get_calibrator("platt")
+        except ImportError:
+            logger.warning("Confidence calibration module not available")
+    return _calibrator
 
 
 @dataclass
@@ -237,9 +252,21 @@ class UnifiedDecisionEngine:
             final_position = 0
             decision_source = "hard_filter_block"
         
+        # === Step 6: 置信度校准 ===
+        # 将模型输出映射为真实概率
+        calibrated_confidence = final_confidence
+        calibrator = _get_calibrator()
+        if calibrator and final_action != "HOLD":
+            try:
+                calib_result = calibrator.calibrate(final_confidence / 100.0)  # 转为0-1
+                calibrated_confidence = calib_result.calibrated_confidence * 100  # 转回百分比
+                logger.debug(f"Confidence calibrated: {final_confidence:.1f}% → {calibrated_confidence:.1f}%")
+            except Exception as e:
+                logger.warning(f"Calibration failed: {e}")
+        
         return UnifiedDecision(
             action=final_action,
-            confidence=final_confidence,
+            confidence=calibrated_confidence,
             position_multiplier=final_position,
             decision_source=decision_source,
             signal_engine_result=signal_engine_dict,

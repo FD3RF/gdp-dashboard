@@ -218,7 +218,7 @@ class HardRiskFilter:
     def _check_reliability(self, reliability: Dict) -> Dict:
         """检查系统可靠度"""
         score = reliability.get('score', 0)
-        win_rate = reliability.get('win_rate', 0) * 100
+        win_rate = reliability.get('win_rate', 0)  # 已经是百分比，无需再乘100
         
         if score < self.MIN_RELIABILITY:
             return {

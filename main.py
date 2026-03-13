@@ -669,6 +669,30 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
             volatility=indicators.get('volatility', 0.02),
         )
         
+        # === 突破检测 (新增) ===
+        # 检测价格是否突破震荡区间
+        if len(support_zones) > 0 and len(resistance_zones) > 0:
+            range_low = min(s[0] for s in support_zones[:3])
+            range_high = max(r[0] for r in resistance_zones[:3])
+            
+            # 获取前一价格和CVD
+            previous_price = df['close'].iloc[-2] if len(df) > 1 else current_price
+            previous_cvd = order_flow_result.get('cvd', {}).get('previous_value', cvd_val)
+            
+            # 检测突破
+            breakout_alert = alert_engine.check_breakout(
+                current_price=current_price,
+                previous_price=previous_price,
+                range_high=range_high,
+                range_low=range_low,
+                cvd_value=cvd_val,
+                cvd_previous=previous_cvd,
+                volume_ratio=indicators.get('volume_ratio', 1.0),
+            )
+            
+            if breakout_alert:
+                alerts.append(breakout_alert)
+        
         alert_status = alert_engine.get_summary()
         active_alerts = [a.to_dict() for a in alerts[:5]]
     except Exception as e:

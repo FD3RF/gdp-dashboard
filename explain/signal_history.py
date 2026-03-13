@@ -486,6 +486,9 @@ class SignalHistoryTracker:
                 )
                 updated.append(record)
                 
+                # 记录校准样本
+                self._add_calibration_sample(record)
+                
                 logger.info(
                     f"Signal {record.signal_id} evaluated: {result.result} "
                     f"({result.touch_type}) PnL={result.pnl_percent:.2f}% "
@@ -581,6 +584,36 @@ class SignalHistoryTracker:
             prices[-1]['price'] = end_price
         
         return prices
+    
+    def _add_calibration_sample(self, record: SignalRecord):
+        """
+        添加校准样本到置信度校准器
+        
+        当信号被评估后，记录其置信度和实际结果
+        用于后续校准模型输出
+        """
+        try:
+            from ai.confidence_calibration import get_calibrator
+            calibrator = get_calibrator()
+            
+            # 将置信度转为0-1范围
+            confidence_normalized = record.confidence / 100.0 if record.confidence > 1 else record.confidence
+            
+            # 结果：WIN=1, LOSS=0, NEUTRAL=0.5
+            if record.result == "WIN":
+                actual = 1
+            elif record.result == "LOSS":
+                actual = 0
+            else:
+                actual = 0.5  # NEUTRAL视为中性
+            
+            calibrator.add_sample(confidence_normalized, actual)
+            logger.debug(f"Added calibration sample: confidence={confidence_normalized:.2f}, result={actual}")
+            
+        except ImportError:
+            pass  # 校准模块不可用
+        except Exception as e:
+            logger.warning(f"Failed to add calibration sample: {e}")
     
     def _calculate_summary_stats(self) -> Dict:
         """计算汇总统计"""
