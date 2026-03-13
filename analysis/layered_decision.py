@@ -173,8 +173,9 @@ class FourLayerDecisionEngine:
         self,
         # 第一层参数
         data_quality_score: float,
-        meta_filter_passed: bool,
         risk_score: float,
+        reliability: Dict = None,
+        confidence: float = 0,
         
         # 第二层参数（趋势）
         regime: str,
@@ -203,12 +204,15 @@ class FourLayerDecisionEngine:
     ) -> FourLayerDecision:
         """
         执行四层决策
+        
+        简化版：移除 meta_filter_passed 参数
         """
         # === 第一层：数据质量和风控 ===
         risk_layer = self._layer1_risk_control(
             data_quality_score=data_quality_score,
-            meta_filter_passed=meta_filter_passed,
             risk_score=risk_score,
+            reliability=reliability,
+            confidence=confidence,
         )
         
         if not risk_layer.passed:
@@ -313,41 +317,48 @@ class FourLayerDecisionEngine:
     def _layer1_risk_control(
         self,
         data_quality_score: float,
-        meta_filter_passed: bool,
         risk_score: float,
+        reliability: Dict = None,
+        confidence: float = 0,
     ) -> LayerResult:
         """
-        第一层：数据质量和风控
+        第一层：数据质量和风控（简化版）
         
-        规则：
-        - 数据质量 < 70% → 不通过
-        - Meta Filter 未通过 → 不通过
-        - 风险分数 > 70 → 不通过
+        整合检查：
+        - 数据质量
+        - 风险分数
+        - 可靠度（高置信度可覆盖）
+        
+        注意：Meta Filter 已移除，检查逻辑整合到 UnifiedFilter
         """
         reasons = []
         passed = True
         
+        # 数据质量检查
         if data_quality_score < self.MIN_DATA_QUALITY:
             passed = False
             reasons.append(f"数据质量={data_quality_score*100:.0f}%")
         
-        if not meta_filter_passed:
-            passed = False
-            reasons.append("Meta Filter未通过")
-        
+        # 风险分数检查
         if risk_score > 70:
             passed = False
             reasons.append(f"风险分数={risk_score:.0f}")
         
+        # 可靠度检查（高置信度可覆盖）
+        if reliability:
+            reliability_score = reliability.get('score', 0)
+            if confidence < 50 and reliability_score < 25:
+                reasons.append(f"可靠度={reliability_score}")
+        
         return LayerResult(
             layer=DecisionLayer.RISK_CONTROL,
             passed=passed,
-            confidence=50 if passed else 30,  # 修复：0-100范围，通过=50%，不通过=30%
+            confidence=50 if passed else 30,
             reason="; ".join(reasons) if reasons else "风控检查通过",
             details={
                 "data_quality": data_quality_score,
-                "meta_filter": meta_filter_passed,
                 "risk_score": risk_score,
+                "reliability": reliability.get('score', 0) if reliability else 0,
             }
         )
     
