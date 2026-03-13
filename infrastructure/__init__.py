@@ -15,6 +15,14 @@ from .event_bus import (
     get_event_bus,
     publish_event,
 )
+from .alert_system import (
+    AlertEngine,
+    Alert,
+    AlertType,
+    AlertSeverity,
+    get_alert_engine,
+    check_alerts,
+)
 
 __all__ = [
     "RedisCache",
@@ -31,4 +39,11 @@ __all__ = [
     "StrategyTrigger",
     "get_event_bus",
     "publish_event",
+    # Alert System
+    "AlertEngine",
+    "Alert",
+    "AlertType",
+    "AlertSeverity",
+    "get_alert_engine",
+    "check_alerts",
 ]

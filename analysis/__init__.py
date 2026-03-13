@@ -54,6 +54,14 @@ from .unified_decision import (
     make_unified_decision,
 )
 
+from .position_manager import (
+    KellyPositionManager,
+    DynamicStopLoss,
+    DynamicTakeProfit,
+    PositionSizing,
+    calculate_optimal_position,
+)
+
 __all__ = [
     "Signal",
     "Decision",
@@ -104,4 +112,10 @@ __all__ = [
     "UnifiedDecision",
     "get_unified_engine",
     "make_unified_decision",
+    # Position Management
+    "KellyPositionManager",
+    "DynamicStopLoss",
+    "DynamicTakeProfit",
+    "PositionSizing",
+    "calculate_optimal_position",
 ]

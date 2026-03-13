@@ -77,6 +77,12 @@ from analysis.layered_decision import make_four_layer_decision, get_four_layer_e
 # Layer 10.5: 统一决策引擎 (核心整合)
 from analysis.unified_decision import make_unified_decision, get_unified_engine, UnifiedDecision
 
+# Layer 10.6: 高级仓位管理 (新增)
+from analysis.position_manager import calculate_optimal_position, PositionSizing
+
+# Layer 1: 实时预警系统 (新增)
+from infrastructure.alert_system import get_alert_engine, check_alerts, AlertSeverity
+
 # Layer 11: 解释层
 from explain.signal_explainer import explain_signal
 from explain.signal_history import record_signal, get_signal_reliability
@@ -161,6 +167,13 @@ class SystemState:
     unified_decision: Dict[str, Any] = field(default_factory=dict)
     position_multiplier: float = 1.0  # 仓位乘数
     has_decision_conflict: bool = False  # 决策冲突标记
+    
+    # 14. 高级仓位管理 (新增)
+    position_sizing: Dict[str, Any] = field(default_factory=dict)
+    
+    # 15. 预警状态 (新增)
+    alert_status: Dict[str, Any] = field(default_factory=dict)
+    active_alerts: List[Any] = field(default_factory=list)
     
     is_simulated: bool = False
 
@@ -577,6 +590,90 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
     else:
         plan = None
     
+    # === 高级仓位管理（凯利公式 + 动态止损止盈）===
+    position_sizing_result = {}
+    if decision.signal != Signal.HOLD:
+        try:
+            # 获取历史统计
+            perf = evolution_data.get('recent_performance', {})
+            win_rate = perf.get('win_rate', 0.5)
+            avg_win = perf.get('avg_win_percent', 2.0)
+            avg_loss = perf.get('avg_loss_percent', 2.0)
+            
+            # 准备清算数据
+            liq_zones = []
+            for alert in liquidation_result.get('approaching_alerts', [])[:5]:
+                liq_zones.append({
+                    'price': alert.get('price', 0),
+                    'direction': alert.get('direction', 'unknown'),
+                    'amount': alert.get('amount', 0),
+                })
+            
+            # 计算最优仓位
+            direction = "long" if decision.signal == Signal.LONG else "short"
+            atr = indicators.get('atr14', current_price * 0.02)
+            
+            pos_sizing = calculate_optimal_position(
+                account_balance=10000,
+                win_rate=win_rate,
+                avg_win_pct=avg_win,
+                avg_loss_pct=avg_loss,
+                signal_confidence=unified_decision_result.confidence / 100,
+                entry_price=current_price,
+                direction=direction,
+                atr=atr,
+                support_zones=support_zones,
+                resistance_zones=resistance_zones,
+                liquidation_zones=liq_zones,
+            )
+            
+            position_sizing_result = {
+                "kelly_fraction": round(pos_sizing.kelly_fraction * 100, 1),
+                "position_size": round(pos_sizing.position_size * 100, 1),
+                "stop_loss": round(pos_sizing.stop_loss_price, 2),
+                "take_profit": round(pos_sizing.take_profit_price, 2),
+                "risk_reward": round(pos_sizing.risk_reward_ratio, 2),
+                "stop_type": pos_sizing.stop_type,
+                "tp_type": pos_sizing.tp_type,
+                "expected_value": round(pos_sizing.expected_value, 2),
+            }
+            
+            # 覆盖交易计划
+            if plan and pos_sizing.risk_reward_ratio >= 1.2:
+                plan.stop_loss = pos_sizing.stop_loss_price
+                plan.take_profit_1 = pos_sizing.take_profit_price
+                plan.risk_reward = pos_sizing.risk_reward_ratio
+                plan.position_size = pos_sizing.position_size * 100
+        except Exception as e:
+            position_sizing_result = {"error": str(e)}
+    
+    # === 实时预警检查 ===
+    try:
+        alert_engine = get_alert_engine()
+        
+        # 价格趋势
+        price_trend = "up" if indicators.get('price_change_pct', 0) > 0 else "down"
+        cvd_trend = order_flow_result.get('cvd', {}).get('direction', 'neutral')
+        cvd_val = order_flow_result.get('cvd', {}).get('value', 0)
+        
+        alerts = alert_engine.check_all(
+            current_price=current_price,
+            support_zones=support_zones,
+            resistance_zones=resistance_zones,
+            liquidation_zones=liq_zones if 'liq_zones' in dir() else [],
+            price_trend=price_trend,
+            cvd_trend=cvd_trend,
+            cvd_value=cvd_val,
+            price_change_pct=indicators.get('price_change_pct', 0),
+            volatility=indicators.get('volatility', 0.02),
+        )
+        
+        alert_status = alert_engine.get_summary()
+        active_alerts = [a.to_dict() for a in alerts[:5]]
+    except Exception as e:
+        alert_status = {"error": str(e)}
+        active_alerts = []
+    
     # === 新增功能 6: 进化状态 ===
     evolution_data = get_evolution_status()
     
@@ -669,6 +766,11 @@ def run_system(symbol: str = "ETH/USDT", use_simulated: bool = False) -> Optiona
         unified_decision=unified_decision_result.to_dict(),
         position_multiplier=position_multiplier,
         has_decision_conflict=unified_decision_result.has_conflict,
+        # 高级仓位管理 (新增)
+        position_sizing=position_sizing_result,
+        # 预警状态 (新增)
+        alert_status=alert_status,
+        active_alerts=active_alerts,
         is_simulated=is_simulated
     )
 
