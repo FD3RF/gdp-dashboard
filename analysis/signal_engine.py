@@ -73,30 +73,12 @@ class AggregatedSignal:
     weighted_long_score: float
     weighted_short_score: float
     
-    # Meta Filter 结果
-    meta_filter_passed: bool
-    meta_filter_reason: str
-    
-    # 信号一致性
+    # 信号质量（保留核心指标）
     signal_consistency: float  # 0-1，信号一致程度
     signal_quality: float  # 0-1，信号质量
     
     # 模块详情
     module_signals: List[ModuleSignal] = field(default_factory=list)
-
-
-@dataclass
-class MetaFilterResult:
-    """Meta Filter 结果"""
-    passed: bool
-    confidence_adjustment: float  # 置信度调整
-    reasons: List[str]
-    
-    # 过滤条件
-    regime_aligned: bool
-    risk_acceptable: bool
-    signal_quality_ok: bool
-    timing_appropriate: bool
 
 
 class SignalAggregator:
@@ -216,149 +198,19 @@ class SignalAggregator:
         return long_votes, short_votes, neutral_votes
 
 
-class MetaFilter:
-    """
-    Meta Filter（元过滤器）
-    
-    功能：
-    1. 判断信号是否可信
-    2. 判断是否允许交易
-    3. 过滤假信号
-    """
-    
-    def __init__(self):
-        self.filter_rules = [
-            self._check_regime_alignment,
-            self._check_risk_acceptable,
-            self._check_signal_quality,
-            self._check_timing,
-        ]
-    
-    def apply_filter(
-        self,
-        direction: SignalDirection,
-        confidence: float,
-        regime: str,
-        risk_score: float,
-        signal_quality: float,
-        consistency: float,
-    ) -> MetaFilterResult:
-        """
-        应用 Meta Filter
-        
-        Args:
-            direction: 信号方向
-            confidence: 置信度
-            regime: 市场状态
-            risk_score: 风险分数
-            signal_quality: 信号质量
-            consistency: 信号一致性
-        
-        Returns:
-            MetaFilterResult
-        """
-        reasons = []
-        passed = True
-        confidence_adjustment = 1.0
-        
-        # 检查 Regime 对齐
-        regime_aligned = self._check_regime_alignment(direction, regime)
-        if not regime_aligned:
-            passed = False
-            reasons.append(f"信号方向与市场状态({regime})不匹配")
-            confidence_adjustment *= 0.7
-        
-        # 检查风险可接受性
-        risk_acceptable = self._check_risk_acceptable(risk_score)
-        if not risk_acceptable:
-            passed = False
-            reasons.append(f"风险分数过高({risk_score:.1f})")
-            confidence_adjustment *= 0.6
-        
-        # 检查信号质量
-        signal_quality_ok = self._check_signal_quality(signal_quality, consistency)
-        if not signal_quality_ok:
-            passed = False
-            reasons.append(f"信号质量不足({signal_quality:.2f})")
-            confidence_adjustment *= 0.5
-        
-        # 检查时机
-        timing_appropriate = self._check_timing(confidence, consistency)
-        if not timing_appropriate:
-            reasons.append("信号置信度不足，建议观望")
-            confidence_adjustment *= 0.8
-        
-        return MetaFilterResult(
-            passed=passed,
-            confidence_adjustment=confidence_adjustment,
-            reasons=reasons,
-            regime_aligned=regime_aligned,
-            risk_acceptable=risk_acceptable,
-            signal_quality_ok=signal_quality_ok,
-            timing_appropriate=timing_appropriate,
-        )
-    
-    def _check_regime_alignment(
-        self,
-        direction: SignalDirection,
-        regime: str
-    ) -> bool:
-        """检查信号方向是否与市场状态对齐"""
-        if direction == SignalDirection.NEUTRAL:
-            return True
-        
-        # 趋势行情
-        if "trend_up" in regime:
-            return direction == SignalDirection.LONG
-        elif "trend_down" in regime:
-            return direction == SignalDirection.SHORT
-        
-        # 震荡行情 - 接受任何方向
-        elif "range" in regime:
-            return True
-        
-        # 恐慌/狂热 - 反向操作
-        elif "panic" in regime:
-            return direction == SignalDirection.LONG  # 恐慌时抄底
-        elif "euphoria" in regime:
-            return direction == SignalDirection.SHORT  # 狂热时反向
-        
-        return True
-    
-    def _check_risk_acceptable(self, risk_score: float) -> bool:
-        """检查风险是否可接受"""
-        return risk_score < 70  # 风险分数 < 70 可接受
-    
-    def _check_signal_quality(
-        self,
-        quality: float,
-        consistency: float
-    ) -> bool:
-        """检查信号质量是否足够"""
-        # 质量需要 > 0.4，一致性 > 0.5
-        return quality > 0.4 and consistency > 0.5
-    
-    def _check_timing(
-        self,
-        confidence: float,
-        consistency: float
-    ) -> bool:
-        """检查时机是否合适"""
-        # 置信度 > 50%，一致性 > 40%
-        return confidence > 50 and consistency > 0.4
-
-
 class SignalEngine:
     """
-    统一信号引擎
+    统一信号引擎（简化版）
     
     核心架构：
-    模块信号 → Signal Aggregator → Meta Filter → 最终决策
+    模块信号 → Signal Aggregator → 最终决策
+    
+    注意：Meta Filter 已移除，过滤逻辑整合到 UnifiedFilter
     """
     
     def __init__(self):
         self.aggregator = SignalAggregator()
-        self.meta_filter = MetaFilter()
+        # 移除: self.meta_filter = MetaFilter()
         
         # 历史记录
         self.signal_history: List[AggregatedSignal] = []
@@ -611,25 +463,9 @@ class SignalEngine:
         consistency = self.aggregator.calculate_consistency()
         quality = self.aggregator.calculate_signal_quality()
         
-        # 应用 Meta Filter
-        meta_result = self.meta_filter.apply_filter(
-            direction=direction,
-            confidence=confidence,
-            regime=regime,
-            risk_score=risk_score,
-            signal_quality=quality,
-            consistency=consistency,
-        )
-        
-        # 调整置信度
-        final_confidence = confidence * meta_result.confidence_adjustment
-        
-        # 如果 Meta Filter 不通过，改为观望
-        if not meta_result.passed:
-            direction = SignalDirection.NEUTRAL
-            hold_prob = max(60, hold_prob)
-            long_prob = min(20, long_prob)
-            short_prob = min(20, short_prob)
+        # 简化：不再应用 Meta Filter
+        # 过滤逻辑已移至 UnifiedFilter
+        final_confidence = confidence
         
         # 获取投票计数
         long_votes, short_votes, neutral_votes = self.aggregator.get_vote_counts()
@@ -647,8 +483,6 @@ class SignalEngine:
             neutral_votes=neutral_votes,
             weighted_long_score=long_score,
             weighted_short_score=short_score,
-            meta_filter_passed=meta_result.passed,
-            meta_filter_reason="; ".join(meta_result.reasons) if meta_result.reasons else "通过",
             signal_consistency=consistency,
             signal_quality=quality,
             module_signals=list(self.aggregator.signals),
@@ -685,10 +519,6 @@ class SignalEngine:
                 "long": latest.long_votes,
                 "short": latest.short_votes,
                 "neutral": latest.neutral_votes,
-            },
-            "meta_filter": {
-                "passed": latest.meta_filter_passed,
-                "reason": latest.meta_filter_reason,
             },
             "quality_metrics": {
                 "consistency": round(latest.signal_consistency, 2),
