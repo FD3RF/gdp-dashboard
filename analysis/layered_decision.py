@@ -275,9 +275,11 @@ class FourLayerDecisionEngine:
             final_action = final_direction.value.upper()
             confidence = direction_layer.confidence * 0.5
         else:
+            # 修复：即使最终决策是HOLD，也保留方向层的置信度用于显示
             final_direction = Direction.NEUTRAL
             final_action = "HOLD"
-            confidence = 0
+            # 保留方向层置信度（不设为0），让用户知道信号强度
+            confidence = direction_layer.confidence if direction_layer.passed else risk_layer.confidence
         
         decision = FourLayerDecision(
             final_direction=final_direction,
