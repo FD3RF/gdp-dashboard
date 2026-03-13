@@ -268,9 +268,15 @@ class DynamicTakeProfit:
     1. 固定盈亏比：止损 * RR
     2. 阻力位止盈
     3. 清算墙止盈
+    4. 移动止盈（盈利后跟随）
+    
+    优化：
+    - 默认盈亏比从 1.5 提升到 2.0
+    - 选择最优止盈目标（而非最近的）
     """
     
-    MIN_RR = 1.5  # 最小盈亏比
+    MIN_RR = 2.0  # 最小盈亏比（优化：1.5 → 2.0）
+    TARGET_RR = 2.5  # 目标盈亏比
     
     def calculate_take_profit(
         self,
@@ -280,7 +286,7 @@ class DynamicTakeProfit:
         resistance_zones: List[Tuple[float, float]],
         support_zones: List[Tuple[float, float]],
         liquidation_zones: List[Dict],
-        min_rr: float = 1.5,
+        min_rr: float = 2.0,  # 优化：1.5 → 2.0
     ) -> Tuple[float, str]:
         """
         计算动态止盈
@@ -337,7 +343,17 @@ class DynamicTakeProfit:
         if not valid_tps:
             return fixed_tp, "fixed_rr"
         
-        best_tp = min(valid_tps, key=lambda x: x[1])
+        # 优化：选择有合理盈亏比的目标，而非最近的
+        # 优先级：清算墙 > 阻力位 > 固定RR
+        for tp_type in ["liquidation", "resistance", "fixed_rr"]:
+            for t, p in valid_tps:
+                if t == tp_type:
+                    rr = (p - entry_price) / risk if risk > 0 else 0
+                    if rr >= self.MIN_RR:
+                        return p, t
+        
+        # 如果没有满足最小RR的，选择盈亏比最高的
+        best_tp = max(valid_tps, key=lambda x: (x[1] - entry_price) / risk if risk > 0 else 0)
         return best_tp[1], best_tp[0]
     
     def _calculate_short_tp(
