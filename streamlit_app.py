@@ -375,7 +375,7 @@ def backtest(df, lookback=100):
     
     total_trades = len(signals)
     if total_trades == 0:
-        return {"total": 0, "win_rate": 0, "avg_pnl": 0}
+        return {"total": 0, "win_rate": 0, "avg_pnl": 0, "signal_freq": 0}
     
     wins = 0
     pnls = []
