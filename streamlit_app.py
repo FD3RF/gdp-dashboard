@@ -7,9 +7,9 @@ from streamlit_autorefresh import st_autorefresh
 from datetime import datetime, timedelta
 
 # 自动刷新
-st_autorefresh(interval=10000, key="refresh_v6_3")
+st_autorefresh(interval=10000, key="refresh_v6_4")
 
-st.set_page_config(page_title="ETH AI Trading System v6.3", layout="wide")
+st.set_page_config(page_title="ETH AI Trading System v6.4", layout="wide")
 
 # 生成模拟数据
 def generate_mock_data(n=300):
@@ -33,55 +33,91 @@ def generate_mock_data(n=300):
         volumes.append(volume)
         price = close_p
     
-    df = pd.DataFrame({
+    return pd.DataFrame({
         'time': times, 'open': opens, 'high': highs, 
         'low': lows, 'close': closes, 'volume': volumes
     })
-    df['date'] = df['time'].dt.date
-    return df
 
-# 加载数据
-@st.cache_data(ttl=10)
-def load_data():
-    url = "https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=5m&limit=300"
+# 币安数据源
+def fetch_binance():
     try:
+        url = "https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=5m&limit=300"
         resp = requests.get(url, timeout=10)
         data = resp.json()
         if not data or len(data) < 50:
-            return None
+            return None, None
         df = pd.DataFrame(data, columns=range(12)).iloc[:, 0:6]
         df.columns = ["time","open","high","low","close","volume"]
         df = df.astype({"open":float,"high":float,"low":float,"close":float,"volume":float})
         df["time"] = pd.to_datetime(df["time"], unit='ms')
-        df["date"] = df["time"].dt.date
-        return df
+        return df, "Binance"
     except:
-        return None
+        return None, None
 
-df = load_data()
-data_source = "实时数据 (币安)"
+# OKX数据源
+def fetch_okx():
+    try:
+        url = "https://www.okx.com/api/v5/market/candles?instId=ETH-USDT&bar=5m&limit=300"
+        resp = requests.get(url, timeout=10)
+        data = resp.json().get('data', [])
+        if not data or len(data) < 50:
+            return None, None
+        df = pd.DataFrame(data)
+        df = df.iloc[:, 0:6]
+        df.columns = ["time","open","high","low","close","volume"]
+        df = df.astype({"open":float,"high":float,"low":float,"close":float,"volume":float})
+        df["time"] = pd.to_datetime(df["time"].astype(int), unit='ms')
+        df = df.sort_values('time').reset_index(drop=True)
+        return df, "OKX"
+    except:
+        return None, None
+
+# Huobi数据源
+def fetch_huobi():
+    try:
+        url = "https://api.huobi.pro/market/history/kline?symbol=ethusdt&period=5min&size=300"
+        resp = requests.get(url, timeout=10)
+        data = resp.json().get('data', [])
+        if not data or len(data) < 50:
+            return None, None
+        df = pd.DataFrame(data)
+        df = df[['id','open','high','low','close','vol']]
+        df.columns = ["time","open","high","low","close","volume"]
+        df = df.astype({"open":float,"high":float,"low":float,"close":float,"volume":float})
+        df["time"] = pd.to_datetime(df["time"].astype(int), unit='s')
+        df = df.sort_values('time').reset_index(drop=True)
+        return df, "Huobi"
+    except:
+        return None, None
+
+# 加载数据（多数据源）
+@st.cache_data(ttl=10)
+def load_data():
+    for fetch_func in [fetch_binance, fetch_okx, fetch_huobi]:
+        df, source = fetch_func()
+        if df is not None and len(df) >= 50:
+            df['date'] = df['time'].dt.date
+            return df, source
+    df = generate_mock_data(300)
+    df['date'] = df['time'].dt.date
+    return df, "模拟数据"
+
+df, data_source = load_data()
 
 if df is None or len(df) < 50:
-    df = generate_mock_data(300)
-    data_source = "模拟数据"
+    st.error("无法获取数据")
+    st.stop()
 
 # 指标计算
 df["ema200"] = df["close"].ewm(span=200, adjust=False).mean()
-
 delta = df["close"].diff()
 gain = delta.where(delta > 0, 0).rolling(14).mean()
 loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
 df["rsi"] = 100 - (100 / (1 + gain / loss.replace(0, np.nan)))
-
 df["vol_ma"] = df["volume"].rolling(20).mean()
 df["high20"] = df["high"].rolling(20).max()
 df["low20"] = df["low"].rolling(20).min()
-
-tr = pd.concat([
-    df["high"] - df["low"],
-    abs(df["high"] - df["close"].shift(1)),
-    abs(df["low"] - df["close"].shift(1))
-], axis=1).max(axis=1)
+tr = pd.concat([df["high"]-df["low"], abs(df["high"]-df["close"].shift(1)), abs(df["low"]-df["close"].shift(1))], axis=1).max(axis=1)
 df["atr"] = tr.rolling(14).mean()
 
 # 评分函数
@@ -160,7 +196,7 @@ recent = df.tail(50)
 win_rate = (recent["signal"].isin(["LONG","SHORT"]).sum() / 50) * 100
 
 # UI
-st.title("ETH 5分钟 AI统一决策 v6.3")
+st.title("ETH 5分钟 AI统一决策 v6.4")
 st.markdown(f"**数据源:** {data_source} | **最新价格:** ${last['close']:.2f} | **时间:** {last['time'].strftime('%Y-%m-%d %H:%M')}")
 
 c1, c2, c3, c4 = st.columns(4)
@@ -187,33 +223,16 @@ c4.metric("ATR", f"${last['atr']:.2f}" if pd.notna(last['atr']) else "N/A")
 
 # K线图
 fig = go.Figure()
-fig.add_trace(go.Candlestick(
-    x=df["time"], open=df["open"], high=df["high"], 
-    low=df["low"], close=df["close"], name="K线"
-))
-fig.add_trace(go.Scatter(
-    x=df["time"], y=df["ema200"], name="EMA200", 
-    line=dict(color='blue', width=2)
-))
-fig.add_trace(go.Bar(
-    x=df["time"], y=df["volume"], name="成交量", 
-    marker_color='lightgray', yaxis="y2"
-))
+fig.add_trace(go.Candlestick(x=df["time"], open=df["open"], high=df["high"], low=df["low"], close=df["close"], name="K线"))
+fig.add_trace(go.Scatter(x=df["time"], y=df["ema200"], name="EMA200", line=dict(color='blue', width=2)))
+fig.add_trace(go.Bar(x=df["time"], y=df["volume"], name="成交量", marker_color='lightgray', yaxis="y2"))
 
 for sig_type, color, sym in [("LONG", "green", "triangle-up"), ("SHORT", "red", "triangle-down")]:
     mask = df["signal"] == sig_type
     if mask.any():
-        fig.add_trace(go.Scatter(
-            x=df["time"][mask], y=df["close"][mask], mode="markers",
-            marker=dict(symbol=sym, size=12, color=color), name=sig_type
-        ))
+        fig.add_trace(go.Scatter(x=df["time"][mask], y=df["close"][mask], mode="markers", marker=dict(symbol=sym, size=12, color=color), name=sig_type))
 
-fig.update_layout(
-    title="ETH 5分钟K线 + EMA200 + 成交量",
-    xaxis_rangeslider_visible=False,
-    yaxis2=dict(overlaying="y", side="right", showgrid=False),
-    height=600
-)
+fig.update_layout(title="ETH 5分钟K线 + EMA200 + 成交量", xaxis_rangeslider_visible=False, yaxis2=dict(overlaying="y", side="right", showgrid=False), height=600)
 st.plotly_chart(fig, use_container_width=True)
 
 # RSI图
