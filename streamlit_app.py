@@ -9,15 +9,16 @@ from datetime import datetime, timedelta
 # 自动刷新
 st_autorefresh(interval=10000, key="refresh_v7_0")
 
-st.set_page_config(page_title="ETH AI Trading System v7.0", layout="wide")
+st.set_page_config(page_title="ETH AI Trading System v7.1", layout="wide")
 
 # ==================== 参数设置侧边栏 ====================
 st.sidebar.header("⚙️ 参数设置")
 
 # 阈值设置
 st.sidebar.subheader("信号阈值")
-long_threshold = st.sidebar.slider("做多阈值", 30, 100, 60, 5, help="分数>=此值才发出做多信号")
-short_threshold = st.sidebar.slider("做空阈值", -100, -30, -60, 5, help="分数<=此值才发出做空信号")
+long_threshold = st.sidebar.slider("做多阈值", 20, 100, 40, 5, help="分数>=此值才发出做多信号")
+short_threshold = st.sidebar.slider("做空阈值", -100, -20, -40, 5, help="分数<=此值才发出做空信号")
+weak_threshold = st.sidebar.slider("弱信号阈值", 10, 30, 20, 5, help="分数>=此值显示弱信号提示")
 
 # 权重设置
 st.sidebar.subheader("指标权重")
@@ -267,7 +268,7 @@ for idx, row in df.iterrows():
     score_details.append(d)
 df["score"] = scores
 
-# ==================== 信号生成 v7.0 ====================
+# ==================== 信号生成 v7.1 ====================
 def generate_signal_v7(df):
     signals = []
     reasons = []
@@ -346,6 +347,15 @@ def generate_signal_v7(df):
                 sig = "SHORT"
                 reason.append(f"分数{score:.0f}<={short_threshold}")
         
+        # 弱信号标注 - 接近阈值但未达标
+        elif sig == "HOLD":
+            if score >= weak_threshold and score < long_threshold:
+                sig = "WEAK_LONG"
+                reason.append(f"弱做多(分数{score:.0f},需>={long_threshold})")
+            elif score <= -weak_threshold and score > short_threshold:
+                sig = "WEAK_SHORT"
+                reason.append(f"弱做空(分数{score:.0f},需<={short_threshold})")
+        
         signals.append(sig)
         reasons.append(reason)
     
@@ -402,7 +412,7 @@ def backtest(df, lookback=100):
 bt_result = backtest(df, 100)
 
 # ==================== UI展示 ====================
-st.title("📊 ETH 5分钟 AI统一决策 v7.0 优化版")
+st.title("📊 ETH 5分钟 AI统一决策 v7.1 优化版")
 st.markdown(f"**数据源:** {data_source} | **最新价格:** ${last['close']:.2f} | **时间:** {last['time'].strftime('%Y-%m-%d %H:%M')}")
 
 # 主要指标
@@ -429,6 +439,12 @@ elif last["signal"] == "SHORT":
     col2.metric("止损", f"${stop_loss:.2f}", f"+{(stop_loss-last['close'])/last['close']*100:.2f}%")
     col3.metric("止盈", f"${take_profit:.2f}", f"-{(last['close']-take_profit)/last['close']*100:.2f}%")
     st.info(f"📈 盈亏比: {risk_reward:.2f}:1")
+elif last["signal"] == "WEAK_LONG":
+    st.info(f"🟡 **弱做多信号** - 接近阈值，建议观望")
+    st.markdown(f"当前评分 {last['score']:.0f} < 做多阈值 {long_threshold}，差 {long_threshold - last['score']:.0f} 分")
+elif last["signal"] == "WEAK_SHORT":
+    st.info(f"🟡 **弱做空信号** - 接近阈值，建议观望")
+    st.markdown(f"当前评分 {last['score']:.0f} > 做空阈值 {short_threshold}，差 {last['score'] - short_threshold:.0f} 分")
 else:
     st.warning("⚪ **观望** - 无明确信号")
     reasons = df.iloc[-1]["reason"]
@@ -471,13 +487,22 @@ fig.add_trace(go.Scatter(x=df["time"], y=df["sar"], name="SAR", mode='markers',
 fig.add_hline(y=last["high20"], line_dash="dash", line_color="red", annotation_text="阻力")
 fig.add_hline(y=last["low20"], line_dash="dash", line_color="green", annotation_text="支撑")
 
-# 信号标记
+# 信号标记 - 强信号
 for sig_type, color, sym in [("LONG", "green", "triangle-up"), ("SHORT", "red", "triangle-down")]:
     mask = df["signal"] == sig_type
     if mask.any():
         fig.add_trace(go.Scatter(
             x=df["time"][mask], y=df["close"][mask], mode="markers",
             marker=dict(symbol=sym, size=15, color=color), name=sig_type
+        ))
+
+# 信号标记 - 弱信号
+for sig_type, color, sym in [("WEAK_LONG", "lightgreen", "triangle-up"), ("WEAK_SHORT", "lightcoral", "triangle-down")]:
+    mask = df["signal"] == sig_type
+    if mask.any():
+        fig.add_trace(go.Scatter(
+            x=df["time"][mask], y=df["close"][mask], mode="markers",
+            marker=dict(symbol=sym, size=10, color=color, opacity=0.6), name=sig_type
         ))
 
 fig.update_layout(
@@ -515,7 +540,7 @@ c4.metric("平均盈亏", f"{bt_result['avg_pnl']:.2f}%")
 
 # 最近信号历史
 st.subheader("📋 最近20条信号")
-recent_signals = df[df["signal"].isin(["LONG", "SHORT"])].tail(20)[["time", "close", "score", "signal"]]
+recent_signals = df[df["signal"].isin(["LONG", "SHORT", "WEAK_LONG", "WEAK_SHORT"])].tail(20)[["time", "close", "score", "signal"]]
 if len(recent_signals) > 0:
     recent_signals["time"] = recent_signals["time"].dt.strftime('%Y-%m-%d %H:%M')
     recent_signals["close"] = recent_signals["close"].round(2)
@@ -531,10 +556,12 @@ st.sidebar.info(f"""
 **当前设置:**
 - 做多阈值: {long_threshold}
 - 做空阈值: {short_threshold}
+- 弱信号阈值: ±{weak_threshold}
 - 信号频率: {bt_result['signal_freq']:.1f}%
 
 **建议:**
 - 信号频率 > 50%: 提高阈值
 - 信号频率 < 10%: 降低阈值
 - 胜率 < 50%: 启用更多过滤条件
+- 弱信号多: 可考虑降低主阈值
 """)
