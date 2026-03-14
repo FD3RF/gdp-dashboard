@@ -1,26 +1,26 @@
 """
-ETH 5分钟四维共振策略 - 完整版
-实时数据 + 优化参数 + 回测统计
+ETH 5分钟四维共振策略 - 简化版
+实时数据 + 成交量+MACD+SAR+支撑阻力
 """
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 from dataclasses import dataclass
 from typing import Optional, List
 import time
+import urllib.request
+import json
+
 
 # ==================== 实时数据获取 ====================
 
 @st.cache_data(ttl=60)
 def fetch_binance_klines(symbol: str = "ETHUSDT", interval: str = "5m", limit: int = 500) -> pd.DataFrame:
     """从币安API获取实时K线数据"""
-    import urllib.request
-    import json
-    
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     
     try:
@@ -48,7 +48,7 @@ def fetch_binance_klines(symbol: str = "ETHUSDT", interval: str = "5m", limit: i
 
 
 def generate_sample_data(n_bars: int = 500, seed: int = None) -> pd.DataFrame:
-    """生成模拟数据（趋势+波动）"""
+    """生成模拟数据"""
     if seed is not None:
         np.random.seed(seed)
     
@@ -56,7 +56,6 @@ def generate_sample_data(n_bars: int = 500, seed: int = None) -> pd.DataFrame:
     dates = pd.date_range(end=datetime.now(), periods=n_bars, freq='5min')
     opens, highs, lows, closes, volumes = [], [], [], [], []
     
-    # 创建趋势和波动
     trend = np.cumsum(np.random.randn(n_bars) * 0.001)
     
     for i in range(n_bars):
@@ -67,13 +66,12 @@ def generate_sample_data(n_bars: int = 500, seed: int = None) -> pd.DataFrame:
         high_price = max(open_price, close_price) * (1 + vol)
         low_price = min(open_price, close_price) * (1 - vol)
         
-        # 添加一些极端成交量
         if np.random.random() < 0.05:
-            volume = 1000 * np.random.uniform(2.5, 4.0)  # 极端放量
+            volume = 1000 * np.random.uniform(2.5, 4.0)
         elif np.random.random() < 0.15:
-            volume = 1000 * np.random.uniform(0.3, 0.5)  # 缩量
+            volume = 1000 * np.random.uniform(0.3, 0.5)
         else:
-            volume = 1000 * np.random.uniform(0.8, 1.5)  # 正常
+            volume = 1000 * np.random.uniform(0.8, 1.5)
         
         opens.append(open_price)
         highs.append(high_price)
@@ -88,12 +86,8 @@ def generate_sample_data(n_bars: int = 500, seed: int = None) -> pd.DataFrame:
 # ==================== 策略核心 ====================
 
 class SignalType(Enum):
-    STANDARD_BULL = "标准多头"
-    STANDARD_BEAR = "标准空头"
-    TRAP_BULL = "诱空陷阱做多"
-    TRAP_BEAR = "诱多陷阱做空"
-    PLATFORM_BULL = "平台突破做多"
-    PLATFORM_BEAR = "平台跌破做空"
+    LONG = "做多"
+    SHORT = "做空"
     NONE = "无信号"
 
 
@@ -107,52 +101,36 @@ class TradeSignal:
     atr: float
     reason: str
     timestamp: datetime = None
-    volume_signal: str = ""
-    macd_signal: str = ""
-    sar_signal: str = ""
-    support_resistance: str = ""
 
 
 class FourDimStrategy:
     """四维共振策略 - 成交量 + MACD + SAR + 支撑阻力"""
     
-    # 优化后的默认参数（增加信号频率）
-    DEFAULT_CONFIG = {
-        'vol_lookback': 5,
-        'vol_shrink_ratio': 0.5,      # 降低，更容易识别缩量
-        'vol_expand_ratio': 1.3,       # 降低，更容易识别放量
-        'vol_panic_ratio': 2.5,        # 降低，更容易识别极端放量
-        'macd_fast': 12,
-        'macd_slow': 26,
-        'macd_signal': 9,
-        'sar_start': 0.02,
-        'sar_inc': 0.02,
-        'sar_max': 0.2,
-        'support_lookback': 20,
-        'range_percent': 0.5,          # 提高，更容易识别横盘
-        'consolidation_bars': 5,
-        'sl_atr_mult': 1.5,
-        'tp_atr_mult': 3.0,
-        'use_ema_filter': False,       # 默认关闭，增加信号
-        'use_volatility_filter': False, # 默认关闭，增加信号
-        'use_rsi_filter': False,        # 默认关闭，增加信号
-        'ema50_len': 50,
-        'rsi_len': 14,
-    }
-    
     def __init__(self, config=None):
-        self.config = {**self.DEFAULT_CONFIG, **(config or {})}
+        self.config = config or {
+            'vol_period': 5,           # 均量周期
+            'vol_shrink': 0.60,        # 缩量阈值
+            'vol_expand': 1.50,        # 放量阈值
+            'macd_fast': 12,           # MACD快线
+            'macd_slow': 26,           # MACD慢线
+            'macd_signal': 9,          # MACD信号线
+            'atr_period': 14,          # ATR周期
+            'stop_atr': 1.5,           # 止损ATR倍数
+            'take_atr': 3.0,           # 止盈ATR倍数
+            'support_lookback': 20,    # 支撑阻力回溯周期
+            'sar_start': 0.02,         # SAR起始步长
+            'sar_max': 0.2,            # SAR最大值
+        }
     
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """计算所有技术指标"""
         df = df.copy()
         cfg = self.config
         
-        # 成交量
-        df['vol_sma'] = df['volume'].rolling(window=cfg['vol_lookback']).mean()
-        df['is_shrink'] = df['volume'] < df['vol_sma'] * cfg['vol_shrink_ratio']
-        df['is_expand'] = df['volume'] > df['vol_sma'] * cfg['vol_expand_ratio']
-        df['is_panic'] = df['volume'] > df['vol_sma'] * cfg['vol_panic_ratio']
+        # 成交量均线
+        df['vol_ma'] = df['volume'].rolling(window=cfg['vol_period']).mean()
+        df['is_expand'] = df['volume'] > df['vol_ma'] * cfg['vol_expand']
+        df['is_shrink'] = df['volume'] < df['vol_ma'] * cfg['vol_shrink']
         
         # MACD
         ema_fast = df['close'].ewm(span=cfg['macd_fast'], adjust=False).mean()
@@ -160,12 +138,10 @@ class FourDimStrategy:
         df['macd_line'] = ema_fast - ema_slow
         df['signal_line'] = df['macd_line'].ewm(span=cfg['macd_signal'], adjust=False).mean()
         df['hist'] = df['macd_line'] - df['signal_line']
-        df['hist_rising'] = df['hist'] > df['hist'].shift(1)
-        df['hist_falling'] = df['hist'] < df['hist'].shift(1)
-        df['hist_cross_up'] = (df['hist'] > 0) & (df['hist'].shift(1) <= 0)
-        df['hist_cross_down'] = (df['hist'] < 0) & (df['hist'].shift(1) >= 0)
+        df['macd_cross_up'] = (df['macd_line'] > df['signal_line']) & (df['macd_line'].shift(1) <= df['signal_line'].shift(1))
+        df['macd_cross_down'] = (df['macd_line'] < df['signal_line']) & (df['macd_line'].shift(1) >= df['signal_line'].shift(1))
         
-        # SAR
+        # SAR (抛物线转向)
         high = df['high'].values
         low = df['low'].values
         close = df['close'].values
@@ -180,62 +156,32 @@ class FourDimStrategy:
                 if low[i] < sar[i]:
                     is_long, sar[i], ep, af = False, ep, low[i], cfg['sar_start']
                 elif high[i] > ep:
-                    ep, af = high[i], min(af + cfg['sar_inc'], cfg['sar_max'])
+                    ep, af = high[i], min(af + 0.02, cfg['sar_max'])
             else:
                 sar[i] = sar[i-1] + af * (ep - sar[i-1])
                 sar[i] = max(sar[i], high[i-1], high[i-2] if i > 1 else high[i-1])
                 if high[i] > sar[i]:
                     is_long, sar[i], ep, af = True, ep, high[i], cfg['sar_start']
                 elif low[i] < ep:
-                    ep, af = low[i], min(af + cfg['sar_inc'], cfg['sar_max'])
+                    ep, af = low[i], min(af + 0.02, cfg['sar_max'])
         
         df['sar'] = sar
-        df['is_green_triangle'] = (close > sar) & (df['close'].shift(1) <= np.roll(sar, 1))
-        df['is_purple_triangle'] = (close < sar) & (df['close'].shift(1) >= np.roll(sar, 1))
-        
-        # 支撑阻力
-        df['support_level'] = df['low'].rolling(window=cfg['support_lookback']).min()
-        df['resistance_level'] = df['high'].rolling(window=cfg['support_lookback']).max()
+        df['above_sar'] = close > sar
+        df['below_sar'] = close < sar
         
         # ATR
         tr1 = df['high'] - df['low']
         tr2 = abs(df['high'] - df['close'].shift(1))
         tr3 = abs(df['low'] - df['close'].shift(1))
         tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        df['atr'] = tr.rolling(window=14).mean()
-        df['atr_ma'] = df['atr'].rolling(window=20).mean()
-        df['volatility_low'] = df['atr'] < df['atr_ma']
+        df['atr'] = tr.rolling(window=cfg['atr_period']).mean()
         
-        # EMA50
-        df['ema50'] = df['close'].ewm(span=cfg['ema50_len'], adjust=False).mean()
+        # 支撑阻力
+        df['resistance'] = df['high'].rolling(window=cfg['support_lookback']).max()
+        df['support'] = df['low'].rolling(window=cfg['support_lookback']).min()
         
-        # RSI
-        delta = df['close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=cfg['rsi_len']).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=cfg['rsi_len']).mean()
-        rs = gain / loss
-        df['rsi'] = 100 - (100 / (1 + rs))
-        
-        # 背离检测
-        df['price_ll'] = df['low'].rolling(window=20).min()
-        df['rsi_ll'] = df['rsi'].rolling(window=20).min()
-        df['bull_div'] = (df['low'] == df['price_ll']) & (df['rsi'] > df['rsi_ll'].shift(1))
-        df['price_hh'] = df['high'].rolling(window=20).max()
-        df['rsi_hh'] = df['rsi'].rolling(window=20).max()
-        df['bear_div'] = (df['high'] == df['price_hh']) & (df['rsi'] < df['rsi_hh'].shift(1))
-        
-        # 横盘检测
-        df['highest_range'] = df['high'].rolling(window=cfg['consolidation_bars']).max()
-        df['lowest_range'] = df['low'].rolling(window=cfg['consolidation_bars']).min()
-        df['range_width'] = (df['highest_range'] - df['lowest_range']) / df['lowest_range'] * 100
-        df['is_consolidation'] = df['range_width'] < cfg['range_percent']
-        df['all_shrink'] = df['volume'].rolling(window=cfg['consolidation_bars']).mean() < df['vol_sma'] * cfg['vol_shrink_ratio']
-        
-        # K线形态
-        df['bearish_candle'] = (df['close'] < df['open']) & ((df['open'] - df['close']) / df['open'] > 0.002)
-        df['bullish_candle'] = (df['close'] > df['open']) & ((df['close'] - df['open']) / df['open'] > 0.002)
-        df['last_bear_high'] = df['high'].where(df['bearish_candle']).ffill()
-        df['last_bull_low'] = df['low'].where(df['bullish_candle']).ffill()
+        # 接近阈值
+        df['touch_threshold'] = df['atr'] * 0.3
         
         return df
     
@@ -247,79 +193,47 @@ class FourDimStrategy:
         df['long_signal'] = False
         df['short_signal'] = False
         df['signal_type'] = SignalType.NONE.value
-        df['signal_reason'] = ""
         df['stop_loss'] = np.nan
         df['take_profit'] = np.nan
         
-        # 1. 标准多头
-        near_support = (df['close'] >= df['support_level']) & (df['close'] < df['support_level'] * 1.02)
-        shrink_at_support = near_support & df['is_shrink'] & (df['low'] > df['support_level'] * 0.998)
-        breakout_bull = df['is_expand'] & (df['close'] > df['last_bear_high'].shift(1))
-        standard_bull = (shrink_at_support.shift(1) | df['is_consolidation'].shift(1)) & breakout_bull & df['hist_cross_up'] & df['is_green_triangle']
+        # 多头条件：
+        # 1. 放量 (volume > vol_ma * vol_expand)
+        # 2. MACD > 信号线 (金叉或柱线为正)
+        # 3. 价格在SAR之上 (SAR位于K线下方)
+        # 4. 价格接近支撑位 (close < support + touch_threshold)
+        long_condition = (
+            df['is_expand'] & 
+            (df['macd_line'] > df['signal_line']) & 
+            df['above_sar'] & 
+            (df['close'] < df['support'] + df['touch_threshold'])
+        )
         
-        # 2. 标准空头
-        near_resistance = (df['close'] <= df['resistance_level']) & (df['close'] > df['resistance_level'] * 0.98)
-        shrink_at_resistance = near_resistance & df['is_shrink'] & (df['high'] < df['resistance_level'] * 1.002)
-        breakdown_bear = df['is_expand'] & (df['close'] < df['last_bull_low'].shift(1))
-        standard_bear = (shrink_at_resistance.shift(1) | df['is_consolidation'].shift(1)) & breakdown_bear & df['hist_cross_down'] & df['is_purple_triangle']
+        # 空头条件：
+        # 1. 放量下跌
+        # 2. MACD < 信号线
+        # 3. 价格在SAR之下
+        # 4. 价格接近阻力位 (close > resistance - touch_threshold)
+        short_condition = (
+            df['is_expand'] & 
+            (df['macd_line'] < df['signal_line']) & 
+            df['below_sar'] & 
+            (df['close'] > df['resistance'] - df['touch_threshold'])
+        )
         
-        # 3. 诱空陷阱做多
-        panic_down = df['is_panic'] & (df['low'] < df['support_level'] * 1.005) & (df['close'] > df['support_level'])
-        confirm_up = df['close'] > (df['high'].shift(1) * 0.5 + df['low'].shift(1) * 0.5)
-        trap_bull = panic_down.shift(1) & confirm_up & df['is_green_triangle'] & (df['hist'].shift(1) < 0) & (df['hist'] > df['hist'].shift(1))
-        if cfg['use_rsi_filter']:
-            trap_bull = trap_bull & df['bull_div']
+        df['long_signal'] = long_condition
+        df['short_signal'] = short_condition
         
-        # 4. 诱多陷阱做空
-        panic_up = df['is_panic'] & (df['high'] > df['resistance_level'] * 0.995) & (df['close'] < df['resistance_level'])
-        confirm_down = df['close'] < (df['high'].shift(1) + df['low'].shift(1)) / 2
-        trap_bear = panic_up.shift(1) & confirm_down & df['is_purple_triangle'] & (df['hist'].shift(1) > 0) & (df['hist'] < df['hist'].shift(1))
-        if cfg['use_rsi_filter']:
-            trap_bear = trap_bear & df['bear_div']
-        
-        # 5. 平台突破做多
-        consolidation_zone = df['is_consolidation'] & df['all_shrink']
-        breakout_up = (df['close'] > df['highest_range'].shift(1)) & df['is_expand']
-        platform_bull = consolidation_zone.shift(1) & breakout_up & df['hist_cross_up'] & df['is_green_triangle']
-        if cfg['use_volatility_filter']:
-            platform_bull = platform_bull & ~df['volatility_low']
-        
-        # 6. 平台跌破做空
-        breakdown_down = (df['close'] < df['lowest_range'].shift(1)) & df['is_expand']
-        platform_bear = consolidation_zone.shift(1) & breakdown_down & df['hist_cross_down'] & df['is_purple_triangle']
-        if cfg['use_volatility_filter']:
-            platform_bear = platform_bear & ~df['volatility_low']
-        
-        # 综合信号
-        long_base = standard_bull | trap_bull | platform_bull
-        short_base = standard_bear | trap_bear | platform_bear
-        
-        if cfg['use_ema_filter']:
-            long_base = long_base & (df['close'] > df['ema50'])
-            short_base = short_base & (df['close'] < df['ema50'])
-        
-        df['long_signal'] = long_base
-        df['short_signal'] = short_base
-        
-        # 信号类型
-        df.loc[standard_bull, 'signal_type'] = SignalType.STANDARD_BULL.value
-        df.loc[standard_bull, 'signal_reason'] = "放量起涨，突破阴线，MACD翻红，绿三角现 → 直接开多"
-        df.loc[standard_bear, 'signal_type'] = SignalType.STANDARD_BEAR.value
-        df.loc[standard_bear, 'signal_reason'] = "放量下跌，跌破阳线，MACD翻绿，紫三角现 → 直接开空"
-        df.loc[trap_bull, 'signal_type'] = SignalType.TRAP_BULL.value
-        df.loc[trap_bull, 'signal_reason'] = "放量暴跌，低点不破，MACD缩短，绿三角现 → 假跌真买"
-        df.loc[trap_bear, 'signal_type'] = SignalType.TRAP_BEAR.value
-        df.loc[trap_bear, 'signal_reason'] = "放量暴涨，高点不破，MACD缩短，紫三角现 → 假涨真空"
-        df.loc[platform_bull, 'signal_type'] = SignalType.PLATFORM_BULL.value
-        df.loc[platform_bull, 'signal_reason'] = "缩量横盘，低点托住，MACD金叉，绿三角现 → 埋伏等涨"
-        df.loc[platform_bear, 'signal_type'] = SignalType.PLATFORM_BEAR.value
-        df.loc[platform_bear, 'signal_reason'] = "缩量横盘，高点压住，MACD死叉，紫三角现 → 埋伏等跌"
+        # 标记信号类型
+        df.loc[long_condition, 'signal_type'] = SignalType.LONG.value
+        df.loc[long_condition, 'signal_reason'] = "放量+MACD金叉+SAR之上+接近支撑 → 做多"
+        df.loc[short_condition, 'signal_type'] = SignalType.SHORT.value
+        df.loc[short_condition, 'signal_reason'] = "放量+MACD死叉+SAR之下+接近阻力 → 做空"
         
         # 止损止盈
-        df.loc[df['long_signal'], 'stop_loss'] = df.loc[df['long_signal'], 'low'] - df.loc[df['long_signal'], 'atr'] * cfg['sl_atr_mult']
-        df.loc[df['long_signal'], 'take_profit'] = df.loc[df['long_signal'], 'close'] + df.loc[df['long_signal'], 'atr'] * cfg['tp_atr_mult']
-        df.loc[df['short_signal'], 'stop_loss'] = df.loc[df['short_signal'], 'high'] + df.loc[df['short_signal'], 'atr'] * cfg['sl_atr_mult']
-        df.loc[df['short_signal'], 'take_profit'] = df.loc[df['short_signal'], 'close'] - df.loc[df['short_signal'], 'atr'] * cfg['tp_atr_mult']
+        df.loc[df['long_signal'], 'stop_loss'] = df.loc[df['long_signal'], 'close'] - df.loc[df['long_signal'], 'atr'] * cfg['stop_atr']
+        df.loc[df['long_signal'], 'take_profit'] = df.loc[df['long_signal'], 'close'] + df.loc[df['long_signal'], 'atr'] * cfg['take_atr']
+        df.loc[df['short_signal'], 'stop_loss'] = df.loc[df['short_signal'], 'close'] + df.loc[df['short_signal'], 'atr'] * cfg['stop_atr']
+        df.loc[df['short_signal'], 'take_profit'] = df.loc[df['short_signal'], 'close'] - df.loc[df['short_signal'], 'atr'] * cfg['take_atr']
         
         return df
     
@@ -337,11 +251,7 @@ class FourDimStrategy:
                 take_profit=row['take_profit'],
                 atr=row['atr'],
                 reason=row['signal_reason'],
-                timestamp=idx,
-                volume_signal="放量" if row['is_expand'] else ("缩量" if row['is_shrink'] else "正常"),
-                macd_signal="金叉" if row['hist_cross_up'] else ("死叉" if row['hist_cross_down'] else "运行中"),
-                sar_signal="绿三角" if row['is_green_triangle'] else ("紫三角" if row['is_purple_triangle'] else "跟随"),
-                support_resistance=f"支撑{row['support_level']:.0f}/阻力{row['resistance_level']:.0f}"
+                timestamp=idx
             ))
         
         return signals
@@ -360,83 +270,91 @@ class FourDimStrategy:
                 take_profit=last['take_profit'],
                 atr=last['atr'],
                 reason=last['signal_reason'],
-                timestamp=df.index[-1],
-                volume_signal="放量" if last['is_expand'] else ("缩量" if last['is_shrink'] else "正常"),
-                macd_signal="金叉" if last['hist_cross_up'] else ("死叉" if last['hist_cross_down'] else "运行中"),
-                sar_signal="绿三角" if last['is_green_triangle'] else ("紫三角" if last['is_purple_triangle'] else "跟随"),
-                support_resistance=f"支撑{last['support_level']:.0f}/阻力{last['resistance_level']:.0f}"
+                timestamp=df.index[-1]
             )
         return None
 
 
 # ==================== 回测引擎 ====================
 
-def run_backtest(df: pd.DataFrame, initial_capital: float = 10000, position_size: float = 0.02) -> dict:
-    """简单回测"""
+def run_backtest(df: pd.DataFrame, initial_capital: float = 10000, position_pct: float = 1.0) -> dict:
+    """回测引擎"""
     capital = initial_capital
     position = 0
     entry_price = 0
+    stop_loss = 0
+    take_profit = 0
     trades = []
     equity_curve = [initial_capital]
     
     for i, (idx, row) in enumerate(df.iterrows()):
+        # 开多仓
         if row['long_signal'] and position == 0:
-            position = capital * position_size / row['close']
+            position = capital * position_pct / row['close']
             entry_price = row['close']
             stop_loss = row['stop_loss']
             take_profit = row['take_profit']
-            capital -= position * entry_price
-            trades.append({'type': 'BUY', 'price': entry_price, 'time': idx})
-            
+            trades.append({'type': 'BUY', 'price': entry_price, 'time': idx, 'reason': row['signal_reason']})
+        
+        # 开空仓
         elif row['short_signal'] and position == 0:
-            position = -capital * position_size / row['close']
+            position = -capital * position_pct / row['close']
             entry_price = row['close']
             stop_loss = row['stop_loss']
             take_profit = row['take_profit']
-            capital -= abs(position) * entry_price
-            trades.append({'type': 'SELL', 'price': entry_price, 'time': idx})
-            
-        # 止损止盈检查
+            trades.append({'type': 'SELL', 'price': entry_price, 'time': idx, 'reason': row['signal_reason']})
+        
+        # 多头止损止盈
         elif position > 0:
             if row['low'] <= stop_loss:
+                pnl = (stop_loss - entry_price) * position
                 capital += position * stop_loss
-                trades.append({'type': 'STOP_LOSS', 'price': stop_loss, 'time': idx})
+                trades.append({'type': 'STOP_LOSS', 'price': stop_loss, 'time': idx, 'pnl': pnl})
                 position = 0
             elif row['high'] >= take_profit:
+                pnl = (take_profit - entry_price) * position
                 capital += position * take_profit
-                trades.append({'type': 'TAKE_PROFIT', 'price': take_profit, 'time': idx})
-                position = 0
-                
-        elif position < 0:
-            if row['high'] >= stop_loss:
-                capital += abs(position) * stop_loss
-                trades.append({'type': 'STOP_LOSS', 'price': stop_loss, 'time': idx})
-                position = 0
-            elif row['low'] <= take_profit:
-                capital += abs(position) * take_profit
-                trades.append({'type': 'TAKE_PROFIT', 'price': take_profit, 'time': idx})
+                trades.append({'type': 'TAKE_PROFIT', 'price': take_profit, 'time': idx, 'pnl': pnl})
                 position = 0
         
-        # 计算权益
-        if position != 0:
+        # 空头止损止盈
+        elif position < 0:
+            if row['high'] >= stop_loss:
+                pnl = (entry_price - stop_loss) * abs(position)
+                capital += abs(position) * stop_loss
+                trades.append({'type': 'STOP_LOSS', 'price': stop_loss, 'time': idx, 'pnl': pnl})
+                position = 0
+            elif row['low'] <= take_profit:
+                pnl = (entry_price - take_profit) * abs(position)
+                capital += abs(position) * take_profit
+                trades.append({'type': 'TAKE_PROFIT', 'price': take_profit, 'time': idx, 'pnl': pnl})
+                position = 0
+        
+        # 记录权益
+        if position > 0:
             equity = capital + position * row['close']
+        elif position < 0:
+            equity = capital + abs(position) * (2 * entry_price - row['close'])
         else:
             equity = capital
         equity_curve.append(equity)
     
     # 平仓
-    if position != 0:
+    if position > 0:
         capital += position * df.iloc[-1]['close']
+    elif position < 0:
+        capital += abs(position) * df.iloc[-1]['close']
     
-    # 计算统计
-    win_trades = [t for t in trades if t['type'] in ['TAKE_PROFIT']]
-    loss_trades = [t for t in trades if t['type'] in ['STOP_LOSS']]
+    # 统计
+    win_trades = [t for t in trades if t.get('type') == 'TAKE_PROFIT']
+    loss_trades = [t for t in trades if t.get('type') == 'STOP_LOSS']
+    entry_trades = [t for t in trades if t.get('type') in ['BUY', 'SELL']]
     
     return {
         'initial_capital': initial_capital,
         'final_capital': capital,
         'total_return': (capital - initial_capital) / initial_capital * 100,
-        'total_trades': len([t for t in trades if t['type'] in ['BUY', 'SELL']]),
+        'total_trades': len(entry_trades),
         'win_trades': len(win_trades),
         'loss_trades': len(loss_trades),
         'win_rate': len(win_trades) / max(1, len(win_trades) + len(loss_trades)) * 100,
@@ -447,56 +365,58 @@ def run_backtest(df: pd.DataFrame, initial_capital: float = 10000, position_size
 
 # ==================== 图表 ====================
 
-def create_chart(df: pd.DataFrame, show_signals: bool = True) -> go.Figure:
+def create_chart(df: pd.DataFrame) -> go.Figure:
     """创建K线图"""
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03,
-        row_heights=[0.5, 0.2, 0.15, 0.15], subplot_titles=('K线图', '成交量', 'MACD', 'RSI'))
+        row_heights=[0.5, 0.2, 0.15, 0.15], subplot_titles=('K线图 + SAR', '成交量', 'MACD', 'ATR'))
     
+    # K线
     fig.add_trace(go.Candlestick(x=df.index, open=df['open'], high=df['high'],
         low=df['low'], close=df['close'], name='K线',
         increasing_line_color='#26a69a', decreasing_line_color='#ef5350'), row=1, col=1)
     
-    if 'sar' in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df['sar'], mode='markers',
-            marker=dict(size=3, color='blue'), name='SAR'), row=1, col=1)
+    # SAR
+    fig.add_trace(go.Scatter(x=df.index, y=df['sar'], mode='markers',
+        marker=dict(size=4, color='orange', symbol='x'), name='SAR'), row=1, col=1)
     
-    if 'support_level' in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df['support_level'], mode='lines',
-            line=dict(color='green', dash='dash'), name='支撑'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['resistance_level'], mode='lines',
-            line=dict(color='red', dash='dash'), name='阻力'), row=1, col=1)
+    # 支撑阻力
+    fig.add_trace(go.Scatter(x=df.index, y=df['support'], mode='lines',
+        line=dict(color='green', dash='dot'), name='支撑'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['resistance'], mode='lines',
+        line=dict(color='red', dash='dot'), name='阻力'), row=1, col=1)
     
-    if 'ema50' in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df['ema50'], mode='lines',
-            line=dict(color='orange', width=1), name='EMA50'), row=1, col=1)
+    # 信号标记
+    long_signals = df[df['long_signal'] == True]
+    if len(long_signals) > 0:
+        fig.add_trace(go.Scatter(x=long_signals.index, y=long_signals['low'] * 0.998,
+            mode='markers', marker=dict(symbol='triangle-up', size=15, color='lime'),
+            name='做多信号'), row=1, col=1)
     
-    if show_signals:
-        long_signals = df[df['long_signal'] == True]
-        if len(long_signals) > 0:
-            fig.add_trace(go.Scatter(x=long_signals.index, y=long_signals['low'] * 0.998,
-                mode='markers', marker=dict(symbol='triangle-up', size=12, color='lime'), name='做多'), row=1, col=1)
-        
-        short_signals = df[df['short_signal'] == True]
-        if len(short_signals) > 0:
-            fig.add_trace(go.Scatter(x=short_signals.index, y=short_signals['high'] * 1.002,
-                mode='markers', marker=dict(symbol='triangle-down', size=12, color='purple'), name='做空'), row=1, col=1)
+    short_signals = df[df['short_signal'] == True]
+    if len(short_signals) > 0:
+        fig.add_trace(go.Scatter(x=short_signals.index, y=short_signals['high'] * 1.002,
+            mode='markers', marker=dict(symbol='triangle-down', size=15, color='red'),
+            name='做空信号'), row=1, col=1)
     
+    # 成交量
     colors = ['#26a69a' if c >= o else '#ef5350' for c, o in zip(df['close'], df['open'])]
     fig.add_trace(go.Bar(x=df.index, y=df['volume'], marker_color=colors, name='成交量', opacity=0.7), row=2, col=1)
     
-    if 'macd_line' in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df['macd_line'], mode='lines',
-            line=dict(color='blue'), name='MACD'), row=3, col=1)
-        fig.add_trace(go.Scatter(x=df.index, y=df['signal_line'], mode='lines',
-            line=dict(color='orange'), name='Signal'), row=3, col=1)
-        hist_colors = ['#26a69a' if h >= 0 else '#ef5350' for h in df['hist'].fillna(0)]
-        fig.add_trace(go.Bar(x=df.index, y=df['hist'], marker_color=hist_colors, name='Hist', opacity=0.7), row=3, col=1)
+    # 均量线
+    fig.add_trace(go.Scatter(x=df.index, y=df['vol_ma'] * cfg.get('vol_expand', 1.5), 
+        mode='lines', line=dict(color='yellow', dash='dash'), name='放量线'), row=2, col=1)
     
-    if 'rsi' in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df['rsi'], mode='lines',
-            line=dict(color='purple'), name='RSI'), row=4, col=1)
-        fig.add_hline(y=70, line_dash='dash', line_color='red', row=4, col=1)
-        fig.add_hline(y=30, line_dash='dash', line_color='green', row=4, col=1)
+    # MACD
+    fig.add_trace(go.Scatter(x=df.index, y=df['macd_line'], mode='lines',
+        line=dict(color='blue'), name='MACD'), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['signal_line'], mode='lines',
+        line=dict(color='orange'), name='Signal'), row=3, col=1)
+    hist_colors = ['#26a69a' if h >= 0 else '#ef5350' for h in df['hist'].fillna(0)]
+    fig.add_trace(go.Bar(x=df.index, y=df['hist'], marker_color=hist_colors, name='Hist', opacity=0.7), row=3, col=1)
+    
+    # ATR
+    fig.add_trace(go.Scatter(x=df.index, y=df['atr'], mode='lines',
+        line=dict(color='purple'), name='ATR'), row=4, col=1)
     
     fig.update_layout(height=800, showlegend=True,
         legend=dict(orientation='h', yanchor='bottom', y=1.02),
@@ -506,11 +426,14 @@ def create_chart(df: pd.DataFrame, show_signals: bool = True) -> go.Figure:
 
 # ==================== 主应用 ====================
 
+cfg = {}
+
 def main():
+    global cfg
     st.set_page_config(page_title="ETH 5分钟四维共振策略", page_icon="📊", layout="wide")
     
     st.title("📊 ETH 5分钟四维共振策略")
-    st.markdown("**六种进场场景 | 实时数据 | 成交量+MACD+SAR+支撑阻力**")
+    st.markdown("**放量 + MACD金叉/死叉 + SAR转向 + 接近支撑/阻力**")
     st.markdown("---")
     
     # 侧边栏
@@ -526,25 +449,21 @@ def main():
         
         # 成交量参数
         st.subheader("📊 成交量参数")
-        vol_lookback = st.number_input("均量周期", value=5, min_value=1, max_value=20)
-        vol_shrink = st.number_input("缩量阈值", value=0.5, step=0.1, min_value=0.1, max_value=1.0)
-        vol_expand = st.number_input("放量阈值", value=1.3, step=0.1, min_value=1.0, max_value=3.0)
+        vol_period = st.number_input("均量周期", value=5, min_value=1, max_value=20)
+        vol_shrink = st.number_input("缩量阈值", value=0.60, step=0.05)
+        vol_expand = st.number_input("放量阈值", value=1.50, step=0.05)
         
         # MACD参数
         st.subheader("📈 MACD参数")
         macd_fast = st.number_input("MACD快线", value=12, min_value=5, max_value=30)
         macd_slow = st.number_input("MACD慢线", value=26, min_value=10, max_value=50)
+        macd_signal = st.number_input("MACD信号线", value=9, min_value=3, max_value=20)
         
-        # 止损止盈
+        # ATR止损止盈
         st.subheader("💰 止损止盈")
-        sl_mult = st.number_input("止损ATR倍数", value=1.5, step=0.1, min_value=0.5, max_value=3.0)
-        tp_mult = st.number_input("止盈ATR倍数", value=3.0, step=0.5, min_value=1.0, max_value=5.0)
-        
-        # 过滤器
-        st.subheader("🔍 过滤器")
-        use_ema = st.checkbox("EMA趋势过滤", value=False)
-        use_vol = st.checkbox("波动率过滤", value=False)
-        use_rsi = st.checkbox("RSI背离过滤", value=False)
+        atr_period = st.number_input("ATR周期", value=14, min_value=5, max_value=30)
+        stop_atr = st.number_input("止损ATR倍数", value=1.5, step=0.1)
+        take_atr = st.number_input("止盈ATR倍数", value=3.0, step=0.5)
         
         st.markdown("---")
         
@@ -555,6 +474,20 @@ def main():
             st.info("🔄 自动刷新已开启")
             time.sleep(60)
             st.rerun()
+    
+    # 构建配置
+    cfg = {
+        'vol_period': vol_period,
+        'vol_shrink': vol_shrink,
+        'vol_expand': vol_expand,
+        'macd_fast': macd_fast,
+        'macd_slow': macd_slow,
+        'macd_signal': macd_signal,
+        'atr_period': atr_period,
+        'stop_atr': stop_atr,
+        'take_atr': take_atr,
+        'vol_expand': vol_expand,  # 用于图表
+    }
     
     # 运行分析
     if run_btn or 'df' in st.session_state:
@@ -568,21 +501,8 @@ def main():
             else:
                 df = generate_sample_data(500)
             
-            # 配置策略
-            config = {
-                'vol_lookback': vol_lookback,
-                'vol_shrink_ratio': vol_shrink,
-                'vol_expand_ratio': vol_expand,
-                'macd_fast': macd_fast,
-                'macd_slow': macd_slow,
-                'sl_atr_mult': sl_mult,
-                'tp_atr_mult': tp_mult,
-                'use_ema_filter': use_ema,
-                'use_volatility_filter': use_vol,
-                'use_rsi_filter': use_rsi,
-            }
-            
-            strategy = FourDimStrategy(config)
+            # 策略计算
+            strategy = FourDimStrategy(cfg)
             df = strategy.generate_signals(df)
             st.session_state.df = df
             
@@ -590,9 +510,30 @@ def main():
             backtest = run_backtest(df)
         
         # 数据信息
-        st.markdown(f"**数据源:** {data_source} | **最新价格:** ${df['close'].iloc[-1]:,.2f} | **时间:** {df.index[-1].strftime('%Y-%m-%d %H:%M:%S')}") 
+        last = df.iloc[-1]
+        st.markdown(f"""
+        **数据源:** {data_source} | 
+        **最新价格:** ${last['close']:,.2f} | 
+        **时间:** {df.index[-1].strftime('%Y-%m-%d %H:%M:%S')} |
+        **ATR:** ${last['atr']:.2f}
+        """)
+        
+        # 四维指标状态
+        st.subheader("📍 四维指标状态")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        vol_status = "🟢 放量" if last['is_expand'] else ("🔴 缩量" if last['is_shrink'] else "⚪ 正常")
+        macd_status = "🟢 金叉" if last['macd_line'] > last['signal_line'] else "🔴 死叉"
+        sar_status = "🟢 SAR之上" if last['above_sar'] else "🔴 SAR之下"
+        sr_status = f"支撑 ${last['support']:.0f} | 阻力 ${last['resistance']:.0f}"
+        
+        col1.metric("成交量", vol_status)
+        col2.metric("MACD", macd_status)
+        col3.metric("SAR", sar_status)
+        col4.metric("支撑/阻力", sr_status[:20])
         
         # 信号统计
+        st.markdown("---")
         long_count = int(df['long_signal'].sum())
         short_count = int(df['short_signal'].sum())
         
@@ -601,11 +542,10 @@ def main():
         col2.metric("🔴 做空信号", short_count)
         col3.metric("📊 总信号", long_count + short_count)
         col4.metric("📈 K线数", len(df))
-        col5.metric("💰 总收益", f"{backtest['total_return']:.1f}%")
-        
-        st.markdown("---")
+        col5.metric("💰 总收益", f"{backtest['total_return']:.2f}%")
         
         # 最新信号
+        st.markdown("---")
         st.subheader("🔔 最新信号")
         signal = strategy.get_latest_signal(df)
         
@@ -626,8 +566,7 @@ def main():
             rr = abs(signal.take_profit - signal.price) / max(0.01, abs(signal.price - signal.stop_loss))
             col4.metric("盈亏比", f"1:{rr:.1f}")
         else:
-            last = df.iloc[-1]
-            st.info(f"当前无交易信号 | 支撑: ${last['support_level']:,.2f} | 阻力: ${last['resistance_level']:,.2f} | ATR: ${last['atr']:.2f}")
+            st.info(f"当前无交易信号 | 支撑: ${last['support']:,.2f} | 阻力: ${last['resistance']:,.2f}")
         
         # K线图
         st.markdown("---")
@@ -642,75 +581,48 @@ def main():
             st.subheader("📊 回测统计")
             st.metric("初始资金", f"${backtest['initial_capital']:,.0f}")
             st.metric("最终资金", f"${backtest['final_capital']:,.0f}")
+            st.metric("总收益", f"{backtest['total_return']:.2f}%")
             st.metric("胜率", f"{backtest['win_rate']:.1f}%")
             st.metric("交易次数", backtest['total_trades'])
         
         with col2:
-            st.subheader("📊 四维指标状态")
-            last = df.iloc[-1]
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("成交量", "放量" if last['is_expand'] else ("缩量" if last['is_shrink'] else "正常"))
-            c2.metric("MACD", "金叉" if last['hist_cross_up'] else ("死叉" if last['hist_cross_down'] else "运行中"))
-            c3.metric("SAR", "绿三角" if last['is_green_triangle'] else ("紫三角" if last['is_purple_triangle'] else "跟随"))
-            c4.metric("RSI", f"{last['rsi']:.1f}")
-        
-        # 信号历史
-        with st.expander("📋 信号历史"):
+            st.subheader("📋 信号历史")
             signals = strategy.get_all_signals(df)
             if signals:
                 signal_df = pd.DataFrame([{
                     '时间': s.timestamp.strftime('%Y-%m-%d %H:%M'),
                     '类型': s.signal_type.value,
-                    '方向': '做多' if s.direction == 'long' else '做空',
                     '价格': f"${s.price:,.2f}",
                     '止损': f"${s.stop_loss:,.2f}",
-                    '止盈': f"${s.take_profit:,.2f}",
-                    '原因': s.reason[:30] + '...'
-                } for s in signals[-20:]])
-                st.dataframe(signal_df, use_container_width=True)
+                    '止盈': f"${s.take_profit:,.2f}"
+                } for s in signals[-10:]])
+                st.dataframe(signal_df, use_container_width=True, hide_index=True)
             else:
                 st.info("暂无历史信号")
     
     else:
         st.info("👈 在侧边栏配置参数后点击 '运行分析' 开始")
         
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            with st.expander("📖 策略说明", expanded=True):
-                st.markdown("""
-                ### 六种进场场景
-                
-                | 类型 | 描述 |
-                |------|------|
-                | 🟢 标准多头 | 放量起涨，突破阴线，MACD翻红，绿三角现 |
-                | 🔴 标准空头 | 放量下跌，跌破阳线，MACD翻绿，紫三角现 |
-                | 🟢 诱空陷阱 | 放量暴跌后收回，假跌真买 |
-                | 🔴 诱多陷阱 | 放量暴涨后回落，假涨真空 |
-                | 🟢 平台突破 | 缩量横盘后放量突破 |
-                | 🔴 平台跌破 | 缩量横盘后放量跌破 |
-                
-                **四维指标：** 成交量 + MACD + SAR + 支撑阻力
-                """)
-        
-        with col2:
-            with st.expander("🎯 参数优化建议", expanded=True):
-                st.markdown("""
-                ### 增加信号频率
-                - 降低 **缩量阈值** (0.4-0.5)
-                - 降低 **放量阈值** (1.2-1.3)
-                - 关闭过滤器 (EMA/波动率/RSI)
-                
-                ### 提高信号质量
-                - 提高 **缩量阈值** (0.6-0.7)
-                - 提高 **放量阈值** (1.5-2.0)
-                - 开启过滤器
-                
-                ### 止损止盈
-                - 短线: 止损1.0 ATR, 止盈2.0 ATR
-                - 中线: 止损1.5 ATR, 止盈3.0 ATR
-                - 长线: 止损2.0 ATR, 止盈4.0 ATR
-                """)
+        with st.expander("📖 策略说明", expanded=True):
+            st.markdown("""
+            ### 四维共振策略
+            
+            **多头条件（四个条件同时满足）：**
+            1. 🟢 **放量** - 成交量 > 均量 × 放量阈值
+            2. 🟢 **MACD金叉** - MACD线 > 信号线
+            3. 🟢 **SAR之上** - 价格在抛物线SAR上方
+            4. 🟢 **接近支撑** - 价格接近支撑位
+            
+            **空头条件（四个条件同时满足）：**
+            1. 🔴 **放量** - 成交量 > 均量 × 放量阈值
+            2. 🔴 **MACD死叉** - MACD线 < 信号线
+            3. 🔴 **SAR之下** - 价格在抛物线SAR下方
+            4. 🔴 **接近阻力** - 价格接近阻力位
+            
+            **止损止盈：**
+            - 止损 = 入场价 ± ATR × 止损倍数
+            - 止盈 = 入场价 ± ATR × 止盈倍数
+            """)
 
 
 if __name__ == "__main__":
