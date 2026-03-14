@@ -1,6 +1,6 @@
-[general]
-projectName = "ETH 5分钟四维共振策略"
-
 [server]
 headless = true
 port = 8501
+
+[browser]
+gatherUsageStats = false
