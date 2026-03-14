@@ -1,6 +1,5 @@
 """
-ETH 5分钟四维共振策略 - Streamlit 入口
-重定向到 main/streamlit_app.py
+ETH 5分钟四维共振策略
 """
 import sys
 from pathlib import Path
