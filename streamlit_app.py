@@ -7,23 +7,21 @@ from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
 
 # 自动刷新
-st_autorefresh(interval=10000, key="refresh_v9_1")
+st_autorefresh(interval=10000, key="refresh_v9_2")
 
-st.set_page_config(page_title="ETH 5分钟量化交易系统 v9.1", layout="wide")
+st.set_page_config(page_title="ETH 5分钟量化交易系统 v9.2", layout="wide")
 
 # ==================== 核心信号函数 ====================
 def get_eth_signal(kline, atr, avg_volume, params=None):
     """
-    精确量化信号计算
+    精确量化信号计算 v9.2
     
-    输入:
-        kline: dict, K线数据
-        atr: float, ATR值
-        avg_volume: float, 均量
-        params: dict, 参数配置
+    关键改进: 突破时忽略波动率过滤
+    逻辑顺序: 趋势 → 突破 → 波动率 → RSI → 成交量
     
-    输出:
-        dict: 信号、入场价、止损、止盈、信心度
+    核心逻辑:
+    - 如果突破成立，波动率过滤失效
+    - 突破本身就是波动释放
     """
     if params is None:
         params = {
@@ -54,43 +52,57 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
         trend = "横盘"
         trend_dir = 0
     
-    # 2. 波动率判断
+    # 2. 突破判断 (提前计算)
+    breakout_long = high20 is not None and close > high20
+    breakout_short = low20 is not None and close < low20
+    
+    # 3. 波动率判断
     volatility = atr / close if close > 0 else 0
     vol_ok = volatility >= params["volatility_thresh"]
     
-    # 3. RSI动量判断
+    # ★ 关键: 如果突破成立，波动率过滤失效
+    vol_filter_ok_long = vol_ok or breakout_long
+    vol_filter_ok_short = vol_ok or breakout_short
+    
+    # 4. RSI动量判断
     rsi_ok_long = rsi >= params["rsi_long"]
     rsi_ok_short = rsi <= params["rsi_short"]
     
-    # 4. 成交量判断
+    # 5. 成交量判断
     vol_ratio = volume / avg_volume if avg_volume > 0 else 0
     volume_ok = vol_ratio >= params["volume_mult"]
-    
-    # 5. 突破判断
-    breakout_long = high20 is not None and close > high20
-    breakout_short = low20 is not None and close < low20
     
     # 6. 信号计算
     signal = "观望"
     confidence = 0.0
-    entry_price = close
     stop_loss = 0
     take_profit = 0
     reasons = []
     
-    # 做多判断
+    # ===== 做多判断 =====
     if trend_dir > 0:
-        if rsi_ok_long and vol_ok and breakout_long and volume_ok:
+        # 强做多: 突破成立 (波动率过滤自动通过)
+        if rsi_ok_long and vol_filter_ok_long and breakout_long and volume_ok:
             signal = "强做多"
             confidence = 1.0
             stop_loss = close - params["stop_loss_mult"] * atr
             take_profit = close + params["take_profit_mult"] * atr
+            reasons.append("突破+" if not vol_ok else "突破")
+        # 强做多: 放量趋势 (无突破但波动率足够)
         elif rsi_ok_long and vol_ok and volume_ok:
+            signal = "强做多"
+            confidence = 0.9
+            stop_loss = close - params["stop_loss_mult"] * atr
+            take_profit = close + params["take_profit_mult"] * atr
+            reasons.append("放量趋势")
+        # 弱做多: 突破但缩量
+        elif rsi_ok_long and vol_filter_ok_long and breakout_long:
             signal = "弱做多"
             confidence = 0.8
             stop_loss = close - params["stop_loss_mult"] * atr
             take_profit = close + params["take_profit_mult"] * atr
-            reasons.append("未突破")
+            reasons.append("突破缩量")
+        # 弱做多: 无突破缩量
         elif rsi_ok_long and vol_ok:
             signal = "弱做多"
             confidence = 0.6
@@ -100,24 +112,37 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
         else:
             if not rsi_ok_long:
                 reasons.append(f"RSI={rsi:.0f}<55")
-            if not vol_ok:
-                reasons.append(f"波动率低")
+            if not vol_filter_ok_long:
+                reasons.append(f"波动率低{volatility*100:.2f}%")
             if not volume_ok:
                 reasons.append(f"缩量{vol_ratio:.1f}x")
+            if not breakout_long:
+                reasons.append("未突破")
     
-    # 做空判断
+    # ===== 做空判断 =====
     elif trend_dir < 0:
-        if rsi_ok_short and vol_ok and breakout_short and volume_ok:
+        # 强做空: 突破成立
+        if rsi_ok_short and vol_filter_ok_short and breakout_short and volume_ok:
             signal = "强做空"
             confidence = 1.0
             stop_loss = close + params["stop_loss_mult"] * atr
             take_profit = close - params["take_profit_mult"] * atr
+            reasons.append("突破-" if not vol_ok else "突破")
+        # 强做空: 放量趋势
         elif rsi_ok_short and vol_ok and volume_ok:
+            signal = "强做空"
+            confidence = 0.9
+            stop_loss = close + params["stop_loss_mult"] * atr
+            take_profit = close - params["take_profit_mult"] * atr
+            reasons.append("放量趋势")
+        # 弱做空: 突破但缩量
+        elif rsi_ok_short and vol_filter_ok_short and breakout_short:
             signal = "弱做空"
             confidence = 0.8
             stop_loss = close + params["stop_loss_mult"] * atr
             take_profit = close - params["take_profit_mult"] * atr
-            reasons.append("未突破")
+            reasons.append("突破缩量")
+        # 弱做空: 无突破缩量
         elif rsi_ok_short and vol_ok:
             signal = "弱做空"
             confidence = 0.6
@@ -127,10 +152,12 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
         else:
             if not rsi_ok_short:
                 reasons.append(f"RSI={rsi:.0f}>45")
-            if not vol_ok:
-                reasons.append(f"波动率低")
+            if not vol_filter_ok_short:
+                reasons.append(f"波动率低{volatility*100:.2f}%")
             if not volume_ok:
                 reasons.append(f"缩量{vol_ratio:.1f}x")
+            if not breakout_short:
+                reasons.append("未突破")
     
     else:
         reasons.append("横盘趋势")
@@ -138,7 +165,7 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
     return {
         "signal": signal,
         "trend": trend,
-        "entry_price": entry_price,
+        "entry_price": close,
         "stop_loss": stop_loss,
         "take_profit": take_profit,
         "confidence": confidence,
@@ -316,10 +343,14 @@ def backtest(df, lookback=100, max_bars=30):
 bt = backtest(df, 100, 30)
 
 # ==================== UI ====================
-last = df.iloc[-1]
-last_reasons = reasons_list[-1]
+# ★ 使用已完成K线 (iloc[-2])，避免最后一根未收盘K线的volume=0问题
+last = df.iloc[-2]
+last_reasons = reasons_list[-2]
+last_vol = vol_ratios[-2]
+last_volatility = vols[-2]
+last_conf = confs[-2]
 
-st.title("📊 ETH 5分钟量化交易系统 v9.1")
+st.title("📊 ETH 5分钟量化交易系统 v9.2")
 st.markdown(f"**{data_source}** | **${last['close']:.2f}** | **{last['time'].strftime('%Y-%m-%d %H:%M')}**")
 
 # 指标
@@ -327,7 +358,7 @@ c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("价格", f"${last['close']:.2f}")
 c2.metric("趋势", last["trend"])
 c3.metric("RSI", f"{last['rsi']:.0f}")
-c4.metric("波动率", f"{vols[-1]*100:.2f}%")
+c4.metric("波动率", f"{last_volatility*100:.2f}%")
 c5.metric("信号频率", f"{bt['freq']:.1f}%")
 
 # 信号
@@ -335,33 +366,35 @@ st.subheader("🎯 交易信号")
 sig = last["signal"]
 
 if sig == "强做多":
-    st.success(f"🟢 **强做多信号** | 信心度: {confs[-1]*100:.0f}%")
+    st.success(f"🟢 **强做多信号** | 信心度: {last_conf*100:.0f}%")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("入场价", f"${last['close']:.2f}")
     col2.metric("止损", f"${last['sl']:.2f}")
     col3.metric("止盈", f"${last['tp']:.2f}")
     col4.metric("盈亏比", "1:1.6")
+    st.info(f"**原因:** {', '.join(last_reasons)}")
 elif sig == "强做空":
-    st.error(f"🔴 **强做空信号** | 信心度: {confs[-1]*100:.0f}%")
+    st.error(f"🔴 **强做空信号** | 信心度: {last_conf*100:.0f}%")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("入场价", f"${last['close']:.2f}")
     col2.metric("止损", f"${last['sl']:.2f}")
     col3.metric("止盈", f"${last['tp']:.2f}")
     col4.metric("盈亏比", "1:1.6")
+    st.info(f"**原因:** {', '.join(last_reasons)}")
 elif sig == "弱做多":
-    st.info(f"🟡 **弱做多信号** | 信心度: {confs[-1]*100:.0f}%")
-    st.markdown(f"**原因:** {', '.join(last_reasons)}")
+    st.info(f"🟡 **弱做多信号** | 信心度: {last_conf*100:.0f}%")
     col1, col2, col3 = st.columns(3)
     col1.metric("入场价", f"${last['close']:.2f}")
     col2.metric("止损", f"${last['sl']:.2f}")
     col3.metric("止盈", f"${last['tp']:.2f}")
+    st.warning(f"**原因:** {', '.join(last_reasons)}")
 elif sig == "弱做空":
-    st.info(f"🟡 **弱做空信号** | 信心度: {confs[-1]*100:.0f}%")
-    st.markdown(f"**原因:** {', '.join(last_reasons)}")
+    st.info(f"🟡 **弱做空信号** | 信心度: {last_conf*100:.0f}%")
     col1, col2, col3 = st.columns(3)
     col1.metric("入场价", f"${last['close']:.2f}")
     col2.metric("止损", f"${last['sl']:.2f}")
     col3.metric("止盈", f"${last['tp']:.2f}")
+    st.warning(f"**原因:** {', '.join(last_reasons)}")
 else:
     st.warning("⚪ **观望**")
     st.markdown(f"**原因:** {', '.join(last_reasons) if last_reasons else '条件不满足'}")
@@ -370,11 +403,11 @@ else:
 st.subheader("📋 条件检查")
 cols = st.columns(6)
 cols[0].metric("趋势", last["trend"])
-cols[1].metric("波动率", f"{vols[-1]*100:.2f}% {'✓' if vols[-1] >= 0.0015 else '✗'}")
+cols[1].metric("波动率", f"{last_volatility*100:.2f}% {'✓' if last_volatility >= 0.0015 else '✗'}")
 cols[2].metric("RSI", f"{last['rsi']:.0f}")
-cols[3].metric("成交量", f"{vol_ratios[-1]:.2f}x {'✓' if vol_ratios[-1] >= 1.5 else '✗'}")
-cols[4].metric("突破高", "✓" if df.iloc[-1]["close"] > df.iloc[-1]["high20"] else "✗")
-cols[5].metric("突破低", "✓" if df.iloc[-1]["close"] < df.iloc[-1]["low20"] else "✗")
+cols[3].metric("成交量", f"{last_vol:.2f}x {'✓' if last_vol >= 1.5 else '✗'}")
+cols[4].metric("突破高", "✓" if last["close"] > last["high20"] else "✗")
+cols[5].metric("突破低", "✓" if last["close"] < last["low20"] else "✗")
 
 # K线图
 st.subheader("📈 价格走势")
@@ -383,15 +416,13 @@ fig.add_trace(go.Candlestick(x=df["time"], open=df["open"], high=df["high"], low
                               increasing_line_color='#26a69a', decreasing_line_color='#ef5350'))
 fig.add_trace(go.Scatter(x=df["time"], y=df["ema50"], line=dict(color='orange',width=1), name="EMA50"))
 fig.add_trace(go.Scatter(x=df["time"], y=df["ema200"], line=dict(color='blue',width=2), name="EMA200"))
-fig.add_hline(y=last["high20"], line_dash="dash", line_color="red", opacity=0.5)
-fig.add_hline(y=last["low20"], line_dash="dash", line_color="green", opacity=0.5)
+fig.add_hline(y=last["high20"], line_dash="dash", line_color="red", opacity=0.5, annotation_text="阻力")
+fig.add_hline(y=last["low20"], line_dash="dash", line_color="green", opacity=0.5, annotation_text="支撑")
 
-# 止损止盈线
 if sig in ["强做多", "弱做多", "强做空", "弱做空"]:
     fig.add_hline(y=last["sl"], line_color="red", line_width=2, annotation_text="止损")
     fig.add_hline(y=last["tp"], line_color="green", line_width=2, annotation_text="止盈")
 
-# 信号标记
 for s, color, sz in [("强做多","green",14),("强做空","red",14),("弱做多","lightgreen",8),("弱做空","lightcoral",8)]:
     mask = df["signal"]==s
     if mask.any():
@@ -438,10 +469,8 @@ st.sidebar.info(f"""
 **止盈:** 2.8 ATR
 **盈亏比:** 1:1.6
 
-**信号类型:**
-- 强多/空: 全条件满足
-- 弱多/空: 部分条件
-- 观望: 不满足
+★ **关键改进:**
+突破时忽略波动率过滤
 
 **胜率:** {bt['win_rate']:.1f}%
 **期望值:** {bt['expectancy']:.3f}%
