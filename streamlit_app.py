@@ -15,80 +15,108 @@ st_autorefresh(interval=10000, key="refresh_v9_7")
 
 st.set_page_config(page_title="ETH 5分钟量化交易系统", layout="wide", initial_sidebar_state="collapsed")
 
-# ==================== v10.1 优化版信号系统 ====================
+# ==================== v10.2 四大策略整合系统 ====================
 def get_eth_signal(kline, atr, avg_volume, params=None):
     """
-    v10.1优化版: 
-    - 增加60-70分信号仓位
-    - 过滤弱信号(<60分)
-    - 优化做空逻辑
-    - 改进震荡策略
+    v10.2完整策略体系:
+    1️⃣ 突破趋势策略 - 价格突破+成交量放大
+    2️⃣ 抄底逃顶策略 - RSI极值+放量确认
+    3️⃣ 区间震荡策略 - 支撑阻力反向开仓
+    4️⃣ 趋势波段策略 - 均线方向+回调买入
     """
     close = kline["close"]
-    ema50 = kline["ema50"]
-    ema200 = kline["ema200"]
+    ema20 = kline.get("ema20", kline.get("ema50", close))
+    ema50 = kline.get("ema50", close)
+    ema60 = kline.get("ema60", kline.get("ema50", close))
+    ema200 = kline.get("ema200", close)
     rsi = kline["rsi"]
+    rsi9 = kline.get("rsi9", rsi)
+    macd = kline.get("macd", 0)
+    macd_signal = kline.get("macd_signal", 0)
     volume = kline["volume"]
     high20 = kline.get("high20", None)
     low20 = kline.get("low20", None)
+    breakout_up = kline.get("breakout_up", False)
+    breakout_down = kline.get("breakout_down", False)
+    ema_cross_up = kline.get("ema_cross_up", False)
+    ema_cross_down = kline.get("ema_cross_down", False)
 
     # ========== 基础指标 ==========
     trend = "多头" if ema50 > ema200 else "空头" if ema50 < ema200 else "横盘"
     trend_dir = 1 if ema50 > ema200 else -1 if ema50 < ema200 else 0
     volatility = atr / close if close > 0 else 0
     vol_ratio = volume / avg_volume if avg_volume > 0 else 0
-    breakout_long = high20 is not None and close > high20
-    breakout_short = low20 is not None and close < low20
 
     # ========== AI评分模型 (0-100) ==========
     score = 0
-    score_details = []
+    strategy_tags = []
 
-    # 趋势分 (20分)
-    if trend_dir > 0:
+    # ----- 1️⃣ 突破趋势策略 (最高40分) -----
+    if trend_dir > 0 and breakout_up and vol_ratio >= 1.5:
+        score += 40
+        strategy_tags.append("突破趋势")
+    elif trend_dir < 0 and breakout_down and vol_ratio >= 1.5:
+        score += 35
+        strategy_tags.append("突破趋势")
+    elif trend_dir > 0 and breakout_up:
+        score += 25
+        strategy_tags.append("缩量突破")
+    elif ema_cross_up and vol_ratio >= 1.5:
+        score += 30
+        strategy_tags.append("金叉突破")
+    elif ema_cross_down and vol_ratio >= 1.5:
+        score += 25
+        strategy_tags.append("死叉突破")
+
+    # ----- 2️⃣ 抄底逃顶策略 (最高30分) -----
+    if rsi9 <= 25 and vol_ratio >= 1.8:  # 极度超卖+放量
+        score += 30
+        strategy_tags.append("抄底")
+    elif rsi9 >= 75 and vol_ratio >= 1.8:  # 极度超买+放量
+        score += 25
+        strategy_tags.append("逃顶")
+    elif rsi9 <= 30 and vol_ratio >= 1.5:
         score += 20
-        score_details.append("趋势+20")
-    elif trend_dir < 0:
-        score += 10
-        score_details.append("趋势+10")
-
-    # RSI分 (20分) - 多头更宽松，空头更严格
-    if trend_dir > 0:  # 多头
-        if rsi >= 70: score += 20
-        elif rsi >= 60: score += 15
-        elif rsi >= 55: score += 10
-        elif rsi >= 50: score += 5
-    elif trend_dir < 0:  # 空头 - 需要更极端的RSI
-        if rsi <= 25: score += 20
-        elif rsi <= 30: score += 15
-        elif rsi <= 35: score += 10
-        elif rsi <= 40: score += 5
-
-    # 成交量分 (20分)
-    if vol_ratio >= 2.0: score += 20
-    elif vol_ratio >= 1.5: score += 15
-    elif vol_ratio >= 1.2: score += 10
-    elif vol_ratio >= 1.0: score += 5
-
-    # 波动率分 (20分)
-    if volatility >= 0.002: score += 20
-    elif volatility >= 0.0015: score += 15
-    elif volatility >= 0.001: score += 10
-    elif volatility >= 0.0008: score += 5
-
-    # 突破分 (20分) - 多头给更多分
-    if trend_dir > 0 and breakout_long:
-        score += 20
-        score_details.append("突破+20")
-    elif trend_dir < 0 and breakout_short:
+        strategy_tags.append("超卖")
+    elif rsi9 >= 70 and vol_ratio >= 1.5:
         score += 15
-        score_details.append("突破+15")
-    elif trend_dir > 0 and high20 and close > high20 * 0.998:
+        strategy_tags.append("超买")
+    # MACD背离
+    if macd > macd_signal and rsi < 40:
         score += 10
-        score_details.append("接近突破+10")
-    elif trend_dir < 0 and low20 and close < low20 * 1.002:
+        strategy_tags.append("底背离")
+    elif macd < macd_signal and rsi > 60:
         score += 8
-        score_details.append("接近突破+8")
+        strategy_tags.append("顶背离")
+
+    # ----- 3️⃣ 区间震荡策略 (最高20分) -----
+    if volatility <= 0.0012:  # 低波动
+        if low20 and close <= low20 * 1.005 and rsi < 35:
+            score += 20
+            strategy_tags.append("支撑反弹")
+        elif high20 and close >= high20 * 0.995 and rsi > 65:
+            score += 18
+            strategy_tags.append("阻力回落")
+
+    # ----- 4️⃣ 趋势波段策略 (最高20分) -----
+    if trend_dir > 0:  # 多头趋势
+        # 回调至EMA20/60附近
+        if ema20 > ema60 and close <= ema20 * 1.005 and close >= ema20 * 0.995:
+            score += 20
+            strategy_tags.append("回调买入")
+        elif ema20 > ema60 and close <= ema60 * 1.01 and close >= ema60 * 0.99:
+            score += 18
+            strategy_tags.append("深调买入")
+    elif trend_dir < 0:  # 空头趋势
+        if ema20 < ema60 and close >= ema20 * 0.995 and close <= ema20 * 1.005:
+            score += 15
+            strategy_tags.append("回调做空")
+
+    # ----- 基础趋势分 (最高10分) -----
+    if trend_dir > 0:
+        score += 10
+    elif trend_dir < 0:
+        score += 5
 
     # ========== 信号类型判断 ==========
     signal, signal_type = "观望", "none"
@@ -96,98 +124,53 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
     position_size = 0
     reasons = []
 
-    # --- 趋势策略 (过滤<60分) ---
-    if score >= 80:  # 强信号
-        if trend_dir > 0:
+    # ===== 信号分级 =====
+    if score >= 70:  # 强信号
+        if trend_dir > 0 or "抄底" in strategy_tags or "支撑反弹" in strategy_tags or "回调买入" in strategy_tags:
             signal = "强做多"
             signal_type = "strong"
             stop_loss = close - 1.8 * atr
             take_profit = close + 3.0 * atr
-            position_size = 60
-            reasons = ["强信号", f"评分{score}", "突破确认"]
-        elif trend_dir < 0:
-            # 强做空需要额外条件
-            if breakout_short and vol_ratio >= 1.5:
-                signal = "强做空"
-                signal_type = "strong"
-                stop_loss = close + 2.0 * atr
-                take_profit = close - 2.5 * atr
-                position_size = 30
-                reasons = ["强做空", f"评分{score}", "突破+放量"]
-            else:
-                # 不满足强做空条件，降级
-                signal = "中做空"
-                signal_type = "medium"
-                stop_loss = close + 1.8 * atr
-                take_profit = close - 2.0 * atr
-                position_size = 25
-                reasons = ["中做空", f"评分{score}"]
+            position_size = 70
+            reasons = strategy_tags[:3] + [f"评分{score}"]
+        elif trend_dir < 0 or "逃顶" in strategy_tags or "阻力回落" in strategy_tags:
+            signal = "强做空"
+            signal_type = "strong"
+            stop_loss = close + 2.0 * atr
+            take_profit = close - 2.5 * atr
+            position_size = 50
+            reasons = strategy_tags[:3] + [f"评分{score}"]
 
-    elif score >= 70:  # 中强信号 - 最佳区间
-        if trend_dir > 0:
-            signal = "中做多"
-            signal_type = "medium"
-            stop_loss = close - 1.5 * atr
-            take_profit = close + 2.5 * atr
-            position_size = 80  # ★ 增加仓位
-            reasons = ["中强信号", f"评分{score}", "最佳区间"]
-        elif trend_dir < 0:
-            signal = "中做空"
-            signal_type = "medium"
-            stop_loss = close + 1.8 * atr
-            take_profit = close - 2.0 * atr
-            position_size = 40
-            reasons = ["中做空", f"评分{score}"]
-
-    elif score >= 60:  # 中等信号 - 次佳区间
-        if trend_dir > 0:
+    elif score >= 50:  # 中等信号
+        if trend_dir > 0 or "支撑反弹" in strategy_tags or "回调买入" in strategy_tags:
             signal = "中做多"
             signal_type = "medium"
             stop_loss = close - 1.5 * atr
             take_profit = close + 2.0 * atr
-            position_size = 70  # ★ 增加仓位
-            reasons = ["中信号", f"评分{score}"]
-        elif trend_dir < 0:
+            position_size = 50
+            reasons = strategy_tags[:2] + [f"评分{score}"]
+        elif trend_dir < 0 or "阻力回落" in strategy_tags:
             signal = "中做空"
             signal_type = "medium"
             stop_loss = close + 1.5 * atr
             take_profit = close - 2.0 * atr
             position_size = 30
-            reasons = ["中做空", f"评分{score}"]
+            reasons = strategy_tags[:2] + [f"评分{score}"]
 
-    # ★ 过滤50-59分弱信号
-
-    # --- 改进震荡策略 ---
-    if signal == "观望" and volatility <= 0.0012:
-        # 多头震荡：RSI超卖 + 接近支撑
-        if rsi <= 30 and (low20 is None or close <= low20 * 1.01):
-            signal = "震荡多"
-            signal_type = "range"
-            stop_loss = close - 0.8 * atr
-            take_profit = close + 1.2 * atr
-            position_size = 20
-            reasons = ["震荡超卖", f"RSI={rsi:.0f}", "接近支撑"]
-        # 空头震荡：RSI超买 + 接近阻力
-        elif rsi >= 70 and (high20 is None or close >= high20 * 0.99):
-            signal = "震荡空"
-            signal_type = "range"
-            stop_loss = close + 0.8 * atr
-            take_profit = close - 1.2 * atr
-            position_size = 15
-            reasons = ["震荡超买", f"RSI={rsi:.0f}", "接近阻力"]
+    # ===== 过滤<50分信号 =====
+    if signal == "观望":
+        reasons = [f"评分{score}<50"]
+        if volatility < 0.001: reasons.append("低波动")
+        if vol_ratio < 1.0: reasons.append(f"缩量{vol_ratio:.1f}x")
 
     # ========== 动态仓位调整 ==========
     if signal != "观望":
-        if score >= 80: position_size = min(position_size, 70)
-        elif score >= 70: position_size = min(position_size, 80)
-        elif score >= 60: position_size = min(position_size, 70)
+        if score >= 80: position_size = min(position_size, 80)
+        elif score >= 70: position_size = min(position_size, 70)
+        elif score >= 60: position_size = min(position_size, 60)
+        elif score >= 50: position_size = min(position_size, 40)
         if volatility < 0.001:
             position_size = int(position_size * 0.7)
-    else:
-        reasons = [f"评分{score}<60"]
-        if volatility < 0.001: reasons.append("低波动")
-        if vol_ratio < 1.0: reasons.append(f"缩量{vol_ratio:.1f}x")
-        if not breakout_long and trend_dir > 0: reasons.append("未突破")
 
     return {
         "signal": signal,
@@ -199,14 +182,14 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
         "confidence": score / 100,
         "volatility": volatility,
         "vol_ratio": vol_ratio,
-        "breakout_long": breakout_long,
-        "breakout_short": breakout_short,
+        "breakout_long": breakout_up,
+        "breakout_short": breakout_down,
         "breakout_prob": score,
         "position_size": position_size,
         "position_reason": f"评分{score}→{position_size}%仓",
         "reasons": reasons,
         "score": score,
-        "score_details": score_details
+        "strategy_tags": strategy_tags
     }
 
 # ==================== 数据获取 ====================
@@ -341,24 +324,56 @@ def generate_mock_data(limit=500):
     df = pd.DataFrame(prices, columns=["time", "open", "high", "low", "close", "volume"])
     return df
 
-# ==================== 指标计算 ====================
+# ==================== 指标计算 (v10.2 增强版) ====================
 def calc_indicators(df):
+    # ===== 均线系统 =====
+    df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
     df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
+    df["ema60"] = df["close"].ewm(span=60, adjust=False).mean()
     df["ema200"] = df["close"].ewm(span=200, adjust=False).mean()
+
+    # ===== RSI系统 =====
+    # RSI(14) 标准周期
     delta = df["close"].diff()
     gain = delta.where(delta > 0, 0).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
     df["rsi"] = 100 - (100 / (1 + gain/loss))
+
+    # RSI(9) 短周期 - 提高敏感度
+    gain9 = delta.where(delta > 0, 0).rolling(9).mean()
+    loss9 = (-delta.where(delta < 0, 0)).rolling(9).mean()
+    df["rsi9"] = 100 - (100 / (1 + gain9/loss9))
+
+    # ===== MACD =====
+    ema12 = df["close"].ewm(span=12, adjust=False).mean()
+    ema26 = df["close"].ewm(span=26, adjust=False).mean()
+    df["macd"] = ema12 - ema26
+    df["macd_signal"] = df["macd"].ewm(span=9, adjust=False).mean()
+    df["macd_hist"] = df["macd"] - df["macd_signal"]
+
+    # ===== ATR =====
     hl = df["high"] - df["low"]
     hc = abs(df["high"] - df["close"].shift())
     lc = abs(df["low"] - df["close"].shift())
     df["atr"] = pd.concat([hl, hc, lc], axis=1).max(axis=1).rolling(14).mean()
+
+    # ===== 成交量 =====
     df["vol_ma"] = df["volume"].rolling(20).mean()
+
+    # ===== 支撑/阻力 =====
     df["high20"] = df["high"].rolling(20).max()
     df["low20"] = df["low"].rolling(20).min()
     df["high15"] = df["high"].rolling(15).max()
     df["low15"] = df["low"].rolling(15).min()
+
+    # ===== 突破判断 =====
     df["breakout_up"] = df["close"] > df["high15"].shift(1)
+    df["breakout_down"] = df["close"] < df["low15"].shift(1)
+
+    # ===== 均线交叉 =====
+    df["ema_cross_up"] = (df["ema20"] > df["ema60"]) & (df["ema20"].shift(1) <= df["ema60"].shift(1))
+    df["ema_cross_down"] = (df["ema20"] < df["ema60"]) & (df["ema20"].shift(1) >= df["ema60"].shift(1))
+
     return df
 
 # ==================== 获取数据 ====================
@@ -388,8 +403,24 @@ params = {"rsi_long": 55, "rsi_short": 45, "volume_mult": 1.5, "volatility_thres
 # 应用信号
 signals, trends, sls, tps, confs, vols, vol_ratios, reasons_list, breakout_probs, position_sizes, position_reasons = [], [], [], [], [], [], [], [], [], [], []
 for idx, row in df.iterrows():
-    kline = {"close": row["close"], "ema50": row["ema50"], "ema200": row["ema200"], "rsi": row["rsi"] if pd.notna(row["rsi"]) else 50,
-             "volume": row["volume"], "high20": row["high20"] if pd.notna(row["high20"]) else None, "low20": row["low20"] if pd.notna(row["low20"]) else None}
+    kline = {
+        "close": row["close"],
+        "ema20": row.get("ema20", row.get("ema50", row["close"])),
+        "ema50": row["ema50"],
+        "ema60": row.get("ema60", row.get("ema50", row["close"])),
+        "ema200": row["ema200"],
+        "rsi": row["rsi"] if pd.notna(row["rsi"]) else 50,
+        "rsi9": row.get("rsi9", row["rsi"] if pd.notna(row["rsi"]) else 50),
+        "macd": row.get("macd", 0),
+        "macd_signal": row.get("macd_signal", 0),
+        "volume": row["volume"],
+        "high20": row["high20"] if pd.notna(row["high20"]) else None,
+        "low20": row["low20"] if pd.notna(row["low20"]) else None,
+        "breakout_up": row.get("breakout_up", False),
+        "breakout_down": row.get("breakout_down", False),
+        "ema_cross_up": row.get("ema_cross_up", False),
+        "ema_cross_down": row.get("ema_cross_down", False)
+    }
     atr = row["atr"] if pd.notna(row["atr"]) else row["close"] * 0.01
     avg_vol = row["vol_ma"] if pd.notna(row["vol_ma"]) else row["volume"]
     result = get_eth_signal(kline, atr, avg_vol, params)
