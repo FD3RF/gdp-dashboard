@@ -785,17 +785,33 @@ with tab1:
     ▲ 做多信号 | ▼ 做空信号
     """
     
-    # ★ 动态设置Y轴范围（根据最近50根K线）
-    recent_high = df['high'].tail(50).max()
-    recent_low = df['low'].tail(50).min()
-    padding = (recent_high - recent_low) * 0.05
+    # ★ 动态设置Y轴范围（根据最近100根有效K线）
+    # 过滤掉价格为0或异常的K线
+    df_valid = df[df['high'] > 0].copy()
+    if len(df_valid) > 0:
+        n = min(100, len(df_valid))
+        recent_high = df_valid['high'].tail(n).max()
+        recent_low = df_valid['low'].tail(n).min()
+        
+        # 确保有效范围
+        if pd.notna(recent_high) and pd.notna(recent_low) and recent_high > recent_low:
+            padding = (recent_high - recent_low) * 0.05
+            y_range = [recent_low - padding, recent_high + padding]
+        else:
+            y_range = None  # 使用自动范围
+    else:
+        y_range = None
     
     fig.update_layout(
         template="plotly_dark", height=550, xaxis_rangeslider_visible=False,
         showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(l=10, r=10, t=30, b=10),
-        yaxis=dict(range=[recent_low - padding, recent_high + padding])
+        margin=dict(l=10, r=10, t=30, b=10)
     )
+    
+    # 设置Y轴范围（如果计算有效）
+    if y_range:
+        fig.update_yaxes(range=y_range, title="价格 (USDT)")
+    
     st.plotly_chart(fig, width='stretch')
     
     # 信号统计
