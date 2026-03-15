@@ -1,3 +1,7 @@
+"""
+ETH 5分钟量化交易系统 v9.7 - 优化版UI
+简化页面布局，更清晰易读
+"""
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -7,31 +11,15 @@ from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
 
 # 自动刷新
-st_autorefresh(interval=10000, key="refresh_v9_6")
+st_autorefresh(interval=10000, key="refresh_v9_7")
 
-st.set_page_config(page_title="ETH 5分钟量化交易系统 v9.6", layout="wide")
+st.set_page_config(page_title="ETH 5分钟量化交易系统", layout="wide", initial_sidebar_state="collapsed")
 
 # ==================== 核心信号函数 ====================
 def get_eth_signal(kline, atr, avg_volume, params=None):
-    """
-    精确量化信号计算 v9.2
-    
-    关键改进: 突破时忽略波动率过滤
-    逻辑顺序: 趋势 → 突破 → 波动率 → RSI → 成交量
-    
-    核心逻辑:
-    - 如果突破成立，波动率过滤失效
-    - 突破本身就是波动释放
-    """
     if params is None:
-        params = {
-            "rsi_long": 55,
-            "rsi_short": 45,
-            "volume_mult": 1.5,
-            "volatility_thresh": 0.0015,
-            "stop_loss_mult": 1.8,
-            "take_profit_mult": 2.8
-        }
+        params = {"rsi_long": 55, "rsi_short": 45, "volume_mult": 1.5, 
+                  "volatility_thresh": 0.0015, "stop_loss_mult": 1.8, "take_profit_mult": 2.8}
     
     close = kline["close"]
     ema50 = kline["ema50"]
@@ -41,345 +29,197 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
     high20 = kline.get("high20", None)
     low20 = kline.get("low20", None)
     
-    # 1. 趋势判断
-    if ema50 > ema200:
-        trend = "多头"
-        trend_dir = 1
-    elif ema50 < ema200:
-        trend = "空头"
-        trend_dir = -1
-    else:
-        trend = "横盘"
-        trend_dir = 0
+    # 趋势判断
+    trend = "多头" if ema50 > ema200 else "空头" if ema50 < ema200 else "横盘"
+    trend_dir = 1 if ema50 > ema200 else -1 if ema50 < ema200 else 0
     
-    # 2. 突破判断 (提前计算)
+    # 突破判断
     breakout_long = high20 is not None and close > high20
     breakout_short = low20 is not None and close < low20
     
-    # 3. 波动率判断
+    # 波动率
     volatility = atr / close if close > 0 else 0
     vol_ok = volatility >= params["volatility_thresh"]
-    
-    # ★ 关键: 如果突破成立，波动率过滤失效
     vol_filter_ok_long = vol_ok or breakout_long
     vol_filter_ok_short = vol_ok or breakout_short
     
-    # 4. RSI动量判断
+    # RSI & 成交量
     rsi_ok_long = rsi >= params["rsi_long"]
     rsi_ok_short = rsi <= params["rsi_short"]
-    
-    # 5. 成交量判断
     vol_ratio = volume / avg_volume if avg_volume > 0 else 0
     volume_ok = vol_ratio >= params["volume_mult"]
     
-    # 6. 信号计算
-    signal = "观望"
-    confidence = 0.0
-    stop_loss = 0
-    take_profit = 0
+    # 信号计算
+    signal, confidence, stop_loss, take_profit = "观望", 0.0, 0, 0
     reasons = []
     
-    # ===== 做多判断 =====
-    if trend_dir > 0:
-        # 强做多: 突破成立 (波动率过滤自动通过)
+    if trend_dir > 0:  # 做多
         if rsi_ok_long and vol_filter_ok_long and breakout_long and volume_ok:
-            signal = "强做多"
-            confidence = 1.0
+            signal, confidence = "强做多", 1.0
             stop_loss = close - params["stop_loss_mult"] * atr
             take_profit = close + params["take_profit_mult"] * atr
-            reasons.append("突破+" if not vol_ok else "突破")
-        # 强做多: 放量趋势 (无突破但波动率足够)
+            reasons.append("突破+")
         elif rsi_ok_long and vol_ok and volume_ok:
-            signal = "强做多"
-            confidence = 0.9
+            signal, confidence = "强做多", 0.9
             stop_loss = close - params["stop_loss_mult"] * atr
             take_profit = close + params["take_profit_mult"] * atr
             reasons.append("放量趋势")
-        # 弱做多: 突破但缩量 (需成交量≥0.8x)
         elif rsi_ok_long and vol_filter_ok_long and breakout_long and vol_ratio >= 0.8:
-            signal = "弱做多"
-            confidence = 0.8
+            signal, confidence = "弱做多", 0.8
             stop_loss = close - params["stop_loss_mult"] * atr
             take_profit = close + params["take_profit_mult"] * atr
             reasons.append("突破缩量")
-        # 弱做多: 无突破放量 (需成交量≥0.8x)
         elif rsi_ok_long and vol_ok and vol_ratio >= 0.8:
-            signal = "弱做多"
-            confidence = 0.6
+            signal, confidence = "弱做多", 0.6
             stop_loss = close - params["stop_loss_mult"] * atr
             take_profit = close + params["take_profit_mult"] * atr
             reasons.append("缩量趋势")
         else:
-            if not rsi_ok_long:
-                reasons.append(f"RSI={rsi:.0f}<55")
-            if not vol_filter_ok_long:
-                reasons.append(f"波动率低{volatility*100:.2f}%")
-            if not volume_ok:
-                reasons.append(f"缩量{vol_ratio:.1f}x")
-            if not breakout_long:
-                reasons.append("未突破")
-    
-    # ===== 做空判断 =====
-    elif trend_dir < 0:
-        # 强做空: 突破成立
+            if not rsi_ok_long: reasons.append(f"RSI={rsi:.0f}<55")
+            if not vol_filter_ok_long: reasons.append(f"波动率低")
+            if not volume_ok: reasons.append(f"缩量{vol_ratio:.1f}x")
+            if not breakout_long: reasons.append("未突破")
+    elif trend_dir < 0:  # 做空
         if rsi_ok_short and vol_filter_ok_short and breakout_short and volume_ok:
-            signal = "强做空"
-            confidence = 1.0
+            signal, confidence = "强做空", 1.0
             stop_loss = close + params["stop_loss_mult"] * atr
             take_profit = close - params["take_profit_mult"] * atr
-            reasons.append("突破-" if not vol_ok else "突破")
-        # 强做空: 放量趋势
+            reasons.append("突破-")
         elif rsi_ok_short and vol_ok and volume_ok:
-            signal = "强做空"
-            confidence = 0.9
+            signal, confidence = "强做空", 0.9
             stop_loss = close + params["stop_loss_mult"] * atr
             take_profit = close - params["take_profit_mult"] * atr
             reasons.append("放量趋势")
-        # 弱做空: 突破但缩量 (需成交量≥0.8x)
         elif rsi_ok_short and vol_filter_ok_short and breakout_short and vol_ratio >= 0.8:
-            signal = "弱做空"
-            confidence = 0.8
+            signal, confidence = "弱做空", 0.8
             stop_loss = close + params["stop_loss_mult"] * atr
             take_profit = close - params["take_profit_mult"] * atr
             reasons.append("突破缩量")
-        # 弱做空: 无突破放量 (需成交量≥0.8x)
         elif rsi_ok_short and vol_ok and vol_ratio >= 0.8:
-            signal = "弱做空"
-            confidence = 0.6
+            signal, confidence = "弱做空", 0.6
             stop_loss = close + params["stop_loss_mult"] * atr
             take_profit = close - params["take_profit_mult"] * atr
             reasons.append("缩量趋势")
         else:
-            if not rsi_ok_short:
-                reasons.append(f"RSI={rsi:.0f}>45")
-            if not vol_filter_ok_short:
-                reasons.append(f"波动率低{volatility*100:.2f}%")
-            if not volume_ok:
-                reasons.append(f"缩量{vol_ratio:.1f}x")
-            if not breakout_short:
-                reasons.append("未突破")
-    
+            if not rsi_ok_short: reasons.append(f"RSI={rsi:.0f}>45")
+            if not vol_filter_ok_short: reasons.append(f"波动率低")
+            if not volume_ok: reasons.append(f"缩量{vol_ratio:.1f}x")
+            if not breakout_short: reasons.append("未突破")
     else:
         reasons.append("横盘趋势")
     
-    # ===== 突破概率计算 =====
-    # 当出现：RSI极强 + 成交量放大 + 波动率压缩 → 高突破概率
-    breakout_prob = 0.0
-    
-    if trend_dir > 0:  # 多头趋势
-        # 基础概率
+    # 突破概率
+    breakout_prob = 0
+    if trend_dir > 0:
         prob = 0
-        
-        # RSI动量贡献 (0-30%)
-        if rsi >= 80:
-            prob += 30
-        elif rsi >= 70:
-            prob += 20
-        elif rsi >= 60:
-            prob += 10
-        
-        # 成交量贡献 (0-35%)
-        if vol_ratio >= 3.0:
-            prob += 35
-        elif vol_ratio >= 2.0:
-            prob += 25
-        elif vol_ratio >= 1.5:
-            prob += 15
-        
-        # 波动率压缩贡献 (0-35%) - 压缩越紧，突破概率越高
-        if volatility < 0.001:  # 极端压缩
-            prob += 35
-        elif volatility < 0.0015:  # 中度压缩
-            prob += 25
-        elif volatility < 0.002:  # 轻度压缩
-            prob += 15
-        
+        if rsi >= 80: prob += 30
+        elif rsi >= 70: prob += 20
+        elif rsi >= 60: prob += 10
+        if vol_ratio >= 3.0: prob += 35
+        elif vol_ratio >= 2.0: prob += 25
+        elif vol_ratio >= 1.5: prob += 15
+        if volatility < 0.001: prob += 35
+        elif volatility < 0.0015: prob += 25
+        elif volatility < 0.002: prob += 15
         breakout_prob = min(prob, 95)
-        
-    elif trend_dir < 0:  # 空头趋势
+    elif trend_dir < 0:
         prob = 0
-        
-        if rsi <= 20:
-            prob += 30
-        elif rsi <= 30:
-            prob += 20
-        elif rsi <= 40:
-            prob += 10
-        
-        if vol_ratio >= 3.0:
-            prob += 35
-        elif vol_ratio >= 2.0:
-            prob += 25
-        elif vol_ratio >= 1.5:
-            prob += 15
-        
-        if volatility < 0.001:
-            prob += 35
-        elif volatility < 0.0015:
-            prob += 25
-        elif volatility < 0.002:
-            prob += 15
-        
+        if rsi <= 20: prob += 30
+        elif rsi <= 30: prob += 20
+        elif rsi <= 40: prob += 10
+        if vol_ratio >= 3.0: prob += 35
+        elif vol_ratio >= 2.0: prob += 25
+        elif vol_ratio >= 1.5: prob += 15
+        if volatility < 0.001: prob += 35
+        elif volatility < 0.0015: prob += 25
+        elif volatility < 0.002: prob += 15
         breakout_prob = min(prob, 95)
     
-    # ===== 仓位自动计算 =====
-    # 根据信号强度自动计算建议仓位
-    position_size = 0.0
-    position_reason = ""
-    
-    if signal == "强做多" or signal == "强做空":
-        # 强信号: 全部条件满足 → 100%仓位
-        position_size = 100.0
-        position_reason = "强信号全仓"
-    elif signal == "弱做多" or signal == "弱做空":
-        if volume_ok:
-            # 弱信号但放量 → 70%仓位
-            position_size = 70.0
-            position_reason = "放量趋势70%"
-        elif vol_ratio >= 1.0:
-            # 弱信号中等量 → 50%仓位
-            position_size = 50.0
-            position_reason = "中等量50%"
-        else:
-            # 弱信号缩量 → 35%仓位
-            position_size = 35.0
-            position_reason = "缩量轻仓35%"
+    # 仓位计算
+    position_size, position_reason = 0, "观望"
+    if signal in ["强做多", "强做空"]:
+        if breakout_prob >= 70: position_size, position_reason = 45, "高概率适度仓45%"
+        elif breakout_prob >= 60: position_size, position_reason = 70, "中高概率70%"
+        elif breakout_prob >= 50: position_size, position_reason = 95, "最佳概率满仓95%"
+        else: position_size, position_reason = 50, "低概率50%"
+    elif signal in ["弱做多", "弱做空"]:
+        if breakout_prob >= 70: position_size, position_reason = 40, "弱高概率40%"
+        elif breakout_prob >= 60: position_size, position_reason = 60, "弱中概率60%"
+        elif breakout_prob >= 50: position_size, position_reason = 80, "弱最佳80%"
+        else: position_size, position_reason = 0, "弱低概率观望"
     else:
-        # 观望状态
-        if breakout_prob >= 70:
-            # 高突破概率 → 20%试探仓位
-            position_size = 20.0
-            position_reason = "高概率试探20%"
-        elif breakout_prob >= 50:
-            # 中等突破概率 → 10%试探
-            position_size = 10.0
-            position_reason = "中概率试探10%"
-        else:
-            # 低突破概率 → 空仓
-            position_size = 0.0
-            position_reason = "空仓观望"
+        if breakout_prob >= 70: position_size, position_reason = 20, "高概率试探20%"
+        elif breakout_prob >= 50: position_size, position_reason = 10, "中概率试探10%"
+    
+    if volatility < 0.001: position_size = int(position_size * 0.5)
+    elif volatility < 0.0015: position_size = int(position_size * 0.7)
     
     return {
-        "signal": signal,
-        "trend": trend,
-        "entry_price": close,
-        "stop_loss": stop_loss,
-        "take_profit": take_profit,
-        "confidence": confidence,
-        "volatility": volatility,
-        "vol_ratio": vol_ratio,
-        "breakout_long": breakout_long,
-        "breakout_short": breakout_short,
-        "breakout_prob": breakout_prob,
-        "position_size": position_size,
-        "position_reason": position_reason,
+        "signal": signal, "trend": trend, "entry_price": close, "stop_loss": stop_loss,
+        "take_profit": take_profit, "confidence": confidence, "volatility": volatility,
+        "vol_ratio": vol_ratio, "breakout_long": breakout_long, "breakout_short": breakout_short,
+        "breakout_prob": breakout_prob, "position_size": position_size, "position_reason": position_reason,
         "reasons": reasons
     }
 
 # ==================== 数据获取 ====================
-def fetch_data():
+def get_data(limit=500):
     try:
-        url = "https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=5m&limit=300"
-        resp = requests.get(url, timeout=10)
-        data = resp.json()
-        if data and len(data) >= 50 and not isinstance(data, dict):
-            df = pd.DataFrame(data).iloc[:, 0:6]
-            df.columns = ["time","open","high","low","close","volume"]
-            df = df.astype({"open":float,"high":float,"low":float,"close":float,"volume":float})
-            df["time"] = pd.to_datetime(df["time"], unit='ms')
-            return df, "Binance"
+        url = f"https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=5m&limit={limit}"
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        df = pd.DataFrame(data, columns=["open_time","open","high","low","close","volume","close_time","qvol","trades","tb","tq","ignore"])
+        df["time"] = pd.to_datetime(df["open_time"], unit="ms")
+        for col in ["open","high","low","close","volume"]: df[col] = pd.to_numeric(df[col])
+        return df.sort_values("time").reset_index(drop=True), "Binance"
     except:
-        pass
-    
-    try:
-        url = "https://www.okx.com/api/v5/market/candles?instId=ETH-USDT&bar=5m&limit=300"
-        resp = requests.get(url, timeout=10)
-        data = resp.json().get('data', [])
-        if data and len(data) >= 50:
-            df = pd.DataFrame(data).iloc[:, 0:6]
-            df.columns = ["time","open","high","low","close","volume"]
-            for col in ["open","high","low","close","volume"]:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-            df["time"] = pd.to_datetime(df["time"].astype(float), unit='ms')
-            df = df.sort_values('time').reset_index(drop=True).dropna()
-            return df, "OKX"
-    except:
-        pass
-    
-    np.random.seed(int(datetime.now().timestamp()) % 10000)
-    price, times = 2100.0, pd.date_range(end=datetime.now(), periods=300, freq='5min')
-    data = []
-    for _ in range(300):
-        change = np.random.normal(0, 0.003)
-        o, c = price, price * (1 + change)
-        h, l = max(o,c) * (1 + abs(np.random.normal(0,0.005))), min(o,c) * (1 - abs(np.random.normal(0,0.005)))
-        data.append([times[_], o, h, l, c, np.random.uniform(800, 3000)])
-        price = c
-    return pd.DataFrame(data, columns=['time','open','high','low','close','volume']), "模拟数据"
-
-@st.cache_data(ttl=10)
-def load_data():
-    return fetch_data()
-
-df, data_source = load_data()
-
-if df is None or len(df) < 50:
-    st.error("无法获取数据")
-    st.stop()
+        try:
+            url = f"https://www.okx.com/api/v5/market/candles?instId=ETH-USDT&bar=5m&limit={limit}"
+            r = requests.get(url, timeout=10)
+            result = r.json()
+            if result.get("code") == "0" and result.get("data"):
+                df = pd.DataFrame(result["data"], columns=["time","open","high","low","close","volume","vc","vq","conf"])
+                df["time"] = pd.to_datetime(df["time"])
+                for col in ["open","high","low","close","volume"]: df[col] = pd.to_numeric(df[col])
+                return df.sort_values("time").reset_index(drop=True), "OKX"
+        except: pass
+    return None, None
 
 # ==================== 指标计算 ====================
-df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
-df["ema200"] = df["close"].ewm(span=200, adjust=False).mean()
+def calc_indicators(df):
+    df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
+    df["ema200"] = df["close"].ewm(span=200, adjust=False).mean()
+    delta = df["close"].diff()
+    gain = delta.where(delta > 0, 0).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    df["rsi"] = 100 - (100 / (1 + gain/loss))
+    hl = df["high"] - df["low"]
+    hc = abs(df["high"] - df["close"].shift())
+    lc = abs(df["low"] - df["close"].shift())
+    df["atr"] = pd.concat([hl, hc, lc], axis=1).max(axis=1).rolling(14).mean()
+    df["vol_ma"] = df["volume"].rolling(20).mean()
+    df["high20"] = df["high"].rolling(20).max()
+    df["low20"] = df["low"].rolling(20).min()
+    df["high15"] = df["high"].rolling(15).max()
+    df["low15"] = df["low"].rolling(15).min()
+    df["breakout_up"] = df["close"] > df["high15"].shift(1)
+    return df
 
-delta = df["close"].diff()
-gain = delta.where(delta > 0, 0).rolling(14).mean()
-loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-df["rsi"] = 100 - (100 / (1 + gain / loss.replace(0, np.nan)))
+# ==================== 获取数据 ====================
+df, data_source = get_data(500)
+if df is None: st.error("无法获取数据"); st.stop()
 
-df["vol_ma"] = df["volume"].rolling(20).mean()
+df = calc_indicators(df)
+params = {"rsi_long": 55, "rsi_short": 45, "volume_mult": 1.5, "volatility_thresh": 0.0015, "stop_loss_mult": 1.8, "take_profit_mult": 2.8}
 
-tr = pd.concat([df["high"]-df["low"], 
-                abs(df["high"]-df["close"].shift(1)), 
-                abs(df["low"]-df["close"].shift(1))], axis=1).max(axis=1)
-df["atr"] = tr.rolling(14).mean()
-
-df["high20"] = df["high"].rolling(20).max()
-df["low20"] = df["low"].rolling(20).min()
-
-# ★ 突破计算 (用于图表标记)
-lookback = 15
-df["recent_high"] = df["high"].rolling(lookback).max()
-df["recent_low"] = df["low"].rolling(lookback).min()
-df["breakout_up"] = df["close"] > df["recent_high"].shift(1)
-df["breakout_down"] = df["close"] < df["recent_low"].shift(1)
-
-# ==================== 应用信号函数 ====================
-params = {
-    "rsi_long": 55,
-    "rsi_short": 45,
-    "volume_mult": 1.5,
-    "volatility_thresh": 0.0015,
-    "stop_loss_mult": 1.8,
-    "take_profit_mult": 2.8
-}
-
+# 应用信号
 signals, trends, sls, tps, confs, vols, vol_ratios, reasons_list, breakout_probs, position_sizes, position_reasons = [], [], [], [], [], [], [], [], [], [], []
-
 for idx, row in df.iterrows():
-    kline = {
-        "close": row["close"],
-        "ema50": row["ema50"],
-        "ema200": row["ema200"],
-        "rsi": row["rsi"] if pd.notna(row["rsi"]) else 50,
-        "volume": row["volume"],
-        "high20": row["high20"] if pd.notna(row["high20"]) else None,
-        "low20": row["low20"] if pd.notna(row["low20"]) else None
-    }
+    kline = {"close": row["close"], "ema50": row["ema50"], "ema200": row["ema200"], "rsi": row["rsi"] if pd.notna(row["rsi"]) else 50,
+             "volume": row["volume"], "high20": row["high20"] if pd.notna(row["high20"]) else None, "low20": row["low20"] if pd.notna(row["low20"]) else None}
     atr = row["atr"] if pd.notna(row["atr"]) else row["close"] * 0.01
     avg_vol = row["vol_ma"] if pd.notna(row["vol_ma"]) else row["volume"]
-    
     result = get_eth_signal(kline, atr, avg_vol, params)
-    
     signals.append(result["signal"])
     trends.append(result["trend"])
     sls.append(result["stop_loss"])
@@ -393,415 +233,158 @@ for idx, row in df.iterrows():
     position_reasons.append(result["position_reason"])
 
 df["signal"] = signals
-df["trend"] = trends
 df["sl"] = sls
 df["tp"] = tps
-df["confidence"] = confs
 
-# ★ 信号标记 (用于图表三角)
-df["long_signal"] = df["signal"].isin(["强做多", "弱做多"])
-df["short_signal"] = df["signal"].isin(["强做空", "弱做空"])
-
-# ==================== 回测 ====================
+# 回测
 def backtest(df, lookback=100, max_bars=30):
     recent = df.tail(lookback).copy()
     trades = recent[recent["signal"].isin(["强做多", "强做空", "弱做多", "弱做空"])]
-    
     if len(trades) == 0:
-        return {"total": 0, "wins": 0, "losses": 0, "win_rate": 0, 
-                "freq": 0, "avg_win": 0, "avg_loss": 0, "expectancy": 0,
-                "trade_records": []}
-    
-    wins, losses = 0, 0
-    win_pnls, loss_pnls = [], []
-    trade_records = []  # ★ 新增：交易记录
-    
+        return {"total": 0, "wins": 0, "losses": 0, "win_rate": 0, "freq": 0, "avg_win": 0, "avg_loss": 0, "expectancy": 0, "records": []}
+    wins, losses, win_pnls, loss_pnls, records = 0, 0, [], [], []
     for idx, row in trades.iterrows():
         pos = df.index.get_loc(idx)
-        if pos + max_bars >= len(df):
-            continue
-        
+        if pos + max_bars >= len(df): continue
         entry, sl, tp = row["close"], row["sl"], row["tp"]
-        signal_type = row["signal"]
-        trade_time = row["time"]
-        
-        if "多" in row["signal"]:
-            for j in range(pos + 1, min(pos + max_bars + 1, len(df))):
-                if df.iloc[j]["low"] <= sl:
-                    pnl = (sl - entry) / entry * 100
-                    loss_pnls.append(pnl)
-                    losses += 1
-                    # ★ 记录交易
-                    trade_records.append({
-                        "时间": trade_time.strftime("%Y-%m-%d %H:%M"),
-                        "信号": signal_type,
-                        "方向": "做多",
-                        "入场价": entry,
-                        "出场价": sl,
-                        "盈亏%": round(pnl, 2),
-                        "结果": "❌ 亏损"
-                    })
-                    break
-                if df.iloc[j]["high"] >= tp:
-                    pnl = (tp - entry) / entry * 100
-                    win_pnls.append(pnl)
-                    wins += 1
-                    # ★ 记录交易
-                    trade_records.append({
-                        "时间": trade_time.strftime("%Y-%m-%d %H:%M"),
-                        "信号": signal_type,
-                        "方向": "做多",
-                        "入场价": entry,
-                        "出场价": tp,
-                        "盈亏%": round(pnl, 2),
-                        "结果": "✅ 盈利"
-                    })
-                    break
-        else:
-            for j in range(pos + 1, min(pos + max_bars + 1, len(df))):
-                if df.iloc[j]["high"] >= sl:
-                    pnl = (entry - sl) / entry * 100
-                    loss_pnls.append(pnl)
-                    losses += 1
-                    # ★ 记录交易
-                    trade_records.append({
-                        "时间": trade_time.strftime("%Y-%m-%d %H:%M"),
-                        "信号": signal_type,
-                        "方向": "做空",
-                        "入场价": entry,
-                        "出场价": sl,
-                        "盈亏%": round(pnl, 2),
-                        "结果": "❌ 亏损"
-                    })
-                    break
-                if df.iloc[j]["low"] <= tp:
-                    pnl = (entry - tp) / entry * 100
-                    win_pnls.append(pnl)
-                    wins += 1
-                    # ★ 记录交易
-                    trade_records.append({
-                        "时间": trade_time.strftime("%Y-%m-%d %H:%M"),
-                        "信号": signal_type,
-                        "方向": "做空",
-                        "入场价": entry,
-                        "出场价": tp,
-                        "盈亏%": round(pnl, 2),
-                        "结果": "✅ 盈利"
-                    })
-                    break
-    
+        is_long = "多" in row["signal"]
+        for j in range(pos + 1, min(pos + max_bars + 1, len(df))):
+            hit_sl = df.iloc[j]["low"] <= sl if is_long else df.iloc[j]["high"] >= sl
+            hit_tp = df.iloc[j]["high"] >= tp if is_long else df.iloc[j]["low"] <= tp
+            if hit_sl:
+                pnl = (sl - entry) / entry * 100 if is_long else (entry - sl) / entry * 100
+                loss_pnls.append(pnl); losses += 1
+                records.append({"时间": row["time"].strftime("%m-%d %H:%M"), "信号": row["signal"], "入场": entry, "出场": sl, "盈亏%": round(pnl,2), "结果": "❌"})
+                break
+            if hit_tp:
+                pnl = (tp - entry) / entry * 100 if is_long else (entry - tp) / entry * 100
+                win_pnls.append(pnl); wins += 1
+                records.append({"时间": row["time"].strftime("%m-%d %H:%M"), "信号": row["signal"], "入场": entry, "出场": tp, "盈亏%": round(pnl,2), "结果": "✅"})
+                break
     total = wins + losses
-    avg_win = np.mean(win_pnls) if win_pnls else 0
-    avg_loss = np.mean(loss_pnls) if loss_pnls else 0
-    win_rate = wins / total * 100 if total > 0 else 0
-    expectancy = (win_rate/100 * avg_win) - ((1 - win_rate/100) * abs(avg_loss)) if total > 0 else 0
-    
-    return {
-        "total": len(trades), "freq": len(trades) / lookback * 100,
-        "wins": wins, "losses": losses, "win_rate": win_rate,
-        "avg_win": avg_win, "avg_loss": avg_loss, "expectancy": expectancy,
-        "trade_records": trade_records  # ★ 返回交易记录
-    }
+    return {"total": len(trades), "freq": len(trades)/lookback*100, "wins": wins, "losses": losses,
+            "win_rate": wins/total*100 if total > 0 else 0, "avg_win": np.mean(win_pnls) if win_pnls else 0,
+            "avg_loss": np.mean(loss_pnls) if loss_pnls else 0, "expectancy": (wins/total*np.mean(win_pnls) - losses/total*abs(np.mean(loss_pnls))) if total > 0 else 0,
+            "records": records}
 
 bt = backtest(df, 100, 30)
 
-# ==================== UI ====================
-# ★ 使用已完成K线 (iloc[-2])，避免最后一根未收盘K线的volume=0问题
+# 当前状态
 last = df.iloc[-2]
-last_reasons = reasons_list[-2]
+sig = last["signal"]
 last_vol = vol_ratios[-2]
 last_volatility = vols[-2]
-last_conf = confs[-2]
-last_breakout_prob = breakout_probs[-2]
-last_position_size = position_sizes[-2]
-last_position_reason = position_reasons[-2]
+last_prob = breakout_probs[-2]
+last_pos = position_sizes[-2]
+last_reasons = reasons_list[-2]
 
-st.title("📊 ETH 5分钟量化交易系统 v9.6")
-st.markdown(f"**{data_source}** | **${last['close']:.2f}** | **{last['time'].strftime('%Y-%m-%d %H:%M')}**")
+# ==================== UI ====================
+st.markdown(f"""
+<style>
+.metric-card {{background: #1a1a2e; border-radius: 10px; padding: 15px; margin: 5px;}}
+.signal-strong {{background: linear-gradient(90deg, #00b894, #00cec9); padding: 20px; border-radius: 15px;}}
+.signal-weak {{background: linear-gradient(90deg, #fdcb6e, #e17055); padding: 20px; border-radius: 15px;}}
+.signal-hold {{background: linear-gradient(90deg, #636e72, #2d3436); padding: 20px; border-radius: 15px;}}
+</style>
+""", unsafe_allow_html=True)
 
-# 指标
-c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
-c1.metric("价格", f"${last['close']:.2f}")
-c2.metric("趋势", last["trend"])
-c3.metric("RSI", f"{last['rsi']:.0f}")
-c4.metric("波动率", f"{last_volatility*100:.2f}%")
-c5.metric("成交量", f"{last_vol:.1f}x")
-c6.metric("建议仓位", f"{last_position_size:.0f}%")
-c7.metric("信号频率", f"{bt['freq']:.1f}%")
+# 标题栏
+col1, col2, col3 = st.columns([2, 3, 2])
+with col1:
+    st.markdown(f"### 📊 ETH 5分钟量化系统")
+with col2:
+    st.markdown(f"<h2 style='text-align:center'>${last['close']:.2f}</h2>", unsafe_allow_html=True)
+with col3:
+    st.markdown(f"<p style='text-align:right'>{data_source} | {last['time'].strftime('%m-%d %H:%M')}</p>", unsafe_allow_html=True)
 
-# 信号与仓位
-st.subheader("🎯 交易信号")
-sig = last["signal"]
+st.divider()
 
-# 仓位条显示
-def show_position_bar(size):
-    """显示仓位进度条"""
-    if size > 0:
-        color = "green" if "多" in sig else "red" if "空" in sig else "gray"
-        st.progress(size/100, text=f"建议仓位: {size:.0f}%")
+# 核心指标
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("趋势", last["trend"], delta="多头" if last["trend"]=="多头" else "空头")
+c2.metric("RSI", f"{last['rsi']:.0f}", delta="✓" if 45 <= last['rsi'] <= 55 else "⚠")
+c3.metric("波动率", f"{last_volatility*100:.2f}%", delta="✓" if last_volatility >= 0.0015 else "低")
+c4.metric("成交量", f"{last_vol:.1f}x", delta="✓" if last_vol >= 1.5 else "缩量")
+c5.metric("突破概率", f"{last_prob:.0f}%")
 
+# 信号显示
+st.divider()
 if sig == "强做多":
-    st.success(f"🟢 **强做多信号** | 信心度: {last_conf*100:.0f}% | 仓位: {last_position_size:.0f}%")
-    show_position_bar(last_position_size)
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("入场价", f"${last['close']:.2f}")
-    col2.metric("止损", f"${last['sl']:.2f}")
-    col3.metric("止盈", f"${last['tp']:.2f}")
-    col4.metric("盈亏比", "1:1.6")
-    st.info(f"**仓位说明:** {last_position_reason} | **原因:** {', '.join(last_reasons)}")
+    st.success(f"### 🟢 {sig} | 仓位 {last_pos}% | 信心 {confs[-2]*100:.0f}%")
 elif sig == "强做空":
-    st.error(f"🔴 **强做空信号** | 信心度: {last_conf*100:.0f}% | 仓位: {last_position_size:.0f}%")
-    show_position_bar(last_position_size)
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("入场价", f"${last['close']:.2f}")
-    col2.metric("止损", f"${last['sl']:.2f}")
-    col3.metric("止盈", f"${last['tp']:.2f}")
-    col4.metric("盈亏比", "1:1.6")
-    st.info(f"**仓位说明:** {last_position_reason} | **原因:** {', '.join(last_reasons)}")
-elif sig == "弱做多":
-    st.info(f"🟡 **弱做多信号** | 信心度: {last_conf*100:.0f}% | 仓位: {last_position_size:.0f}%")
-    show_position_bar(last_position_size)
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("入场价", f"${last['close']:.2f}")
-    col2.metric("止损", f"${last['sl']:.2f}")
-    col3.metric("止盈", f"${last['tp']:.2f}")
-    col4.metric("仓位说明", last_position_reason)
-    st.warning(f"**原因:** {', '.join(last_reasons)}")
-elif sig == "弱做空":
-    st.info(f"🟡 **弱做空信号** | 信心度: {last_conf*100:.0f}% | 仓位: {last_position_size:.0f}%")
-    show_position_bar(last_position_size)
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("入场价", f"${last['close']:.2f}")
-    col2.metric("止损", f"${last['sl']:.2f}")
-    col3.metric("止盈", f"${last['tp']:.2f}")
-    col4.metric("仓位说明", last_position_reason)
+    st.error(f"### 🔴 {sig} | 仓位 {last_pos}% | 信心 {confs[-2]*100:.0f}%")
+elif sig in ["弱做多", "弱做空"]:
+    st.info(f"### 🟡 {sig} | 仓位 {last_pos}% | 信心 {confs[-2]*100:.0f}%")
 else:
-    st.warning("⚪ **观望**")
-    st.markdown(f"**原因:** {', '.join(last_reasons) if last_reasons else '条件不满足'}")
-    show_position_bar(last_position_size)
-    st.info(f"**仓位说明:** {last_position_reason}")
-    
-    # 显示突破概率
-    if last_breakout_prob > 0:
-        prob_color = "🔴" if last_breakout_prob >= 70 else "🟡" if last_breakout_prob >= 50 else "🟢"
-        st.markdown(f"### {prob_color} **突破概率: {last_breakout_prob:.0f}%**")
-        
-        # 概率解释
-        if last_breakout_prob >= 70:
-            st.success("🔥 **高概率突破形态** - RSI极强 + 成交量放大 + 波动率压缩")
-        elif last_breakout_prob >= 50:
-            st.info("📊 **中等突破概率** - 部分条件满足")
-        else:
-            st.caption("📈 突破概率较低，继续等待")
+    st.warning(f"### ⚪ {sig}")
 
-# 条件检查
-st.subheader("📋 条件检查")
-cols = st.columns(6)
-cols[0].metric("趋势", last["trend"])
-cols[1].metric("波动率", f"{last_volatility*100:.2f}% {'✓' if last_volatility >= 0.0015 else '✗'}")
-cols[2].metric("RSI", f"{last['rsi']:.0f}")
-cols[3].metric("成交量", f"{last_vol:.2f}x {'✓' if last_vol >= 1.5 else '✗'}")
-cols[4].metric("突破高", "✓" if last["close"] > last["high20"] else "✗")
-cols[5].metric("突破低", "✓" if last["close"] < last["low20"] else "✗")
-
-# K线图
-st.subheader("📈 价格走势")
-fig = go.Figure()
-
-# K线
-fig.add_trace(go.Candlestick(
-    x=df["time"], open=df["open"], high=df["high"], low=df["low"], close=df["close"],
-    increasing_line_color='#26a69a', decreasing_line_color='#ef5350', name="ETH"
-))
-
-# 均线
-fig.add_trace(go.Scatter(x=df["time"], y=df["ema50"], line=dict(color='orange', width=1.5), name="EMA50"))
-fig.add_trace(go.Scatter(x=df["time"], y=df["ema200"], line=dict(color='blue', width=2), name="EMA200"))
-
-# 阻力支撑
-fig.add_hline(y=last["high20"], line_dash="dash", line_color="red", opacity=0.5, annotation_text="阻力")
-fig.add_hline(y=last["low20"], line_dash="dash", line_color="green", opacity=0.5, annotation_text="支撑")
-
-# 止损止盈线 (当前信号)
-if sig in ["强做多", "弱做多", "强做空", "弱做空"] and last["sl"] > 0:
-    fig.add_hline(y=last["sl"], line_dash="dash", line_color="red", line_width=2, annotation_text="SL")
-    fig.add_hline(y=last["tp"], line_dash="dash", line_color="green", line_width=2, annotation_text="TP")
-
-# ★ 多头三角 ▲ (在K线下方)
-long_df = df[df["long_signal"]]
-if len(long_df) > 0:
-    fig.add_trace(go.Scatter(
-        x=long_df["time"], y=long_df["low"] * 0.997, mode="markers",
-        marker=dict(symbol="triangle-up", size=12, color="lime"), name="Long"
-    ))
-
-# ★ 空头三角 ▼ (在K线上方)
-short_df = df[df["short_signal"]]
-if len(short_df) > 0:
-    fig.add_trace(go.Scatter(
-        x=short_df["time"], y=short_df["high"] * 1.003, mode="markers",
-        marker=dict(symbol="triangle-down", size=12, color="red"), name="Short"
-    ))
-
-# ★ 突破标记 ◆
-break_df = df[df["breakout_up"]]
-if len(break_df) > 0:
-    fig.add_trace(go.Scatter(
-        x=break_df["time"], y=break_df["high"], mode="markers",
-        marker=dict(symbol="diamond", size=8, color="yellow", opacity=0.7), name="Break"
-    ))
-
-# 图表美化
-fig.update_layout(
-    template="plotly_dark",
-    height=500,
-    xaxis_rangeslider_visible=False,
-    margin=dict(l=10, r=10, t=20, b=20),
-    showlegend=True,
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-)
-fig.update_yaxes(gridcolor="rgba(255,255,255,0.05)")
-fig.update_xaxes(showgrid=False)
-
-st.plotly_chart(fig, use_container_width=True)
-
-# 成交量
-fig_vol = go.Figure()
-fig_vol.add_trace(go.Bar(x=df["time"], y=df["volume"], marker_color='lightgray'))
-fig_vol.add_trace(go.Scatter(x=df["time"], y=df["vol_ma"], line=dict(color='blue'), name="均量"))
-fig_vol.add_trace(go.Scatter(x=df["time"], y=df["vol_ma"]*1.5, line=dict(color='red',dash='dash'), name="阈值"))
-fig_vol.update_layout(height=100, showlegend=False)
-st.plotly_chart(fig_vol, use_container_width=True)
-
-# RSI
-fig_rsi = go.Figure()
-fig_rsi.add_trace(go.Scatter(x=df["time"], y=df["rsi"], line=dict(color='purple')))
-fig_rsi.add_hline(y=55, line_dash="dash", line_color="green")
-fig_rsi.add_hline(y=45, line_dash="dash", line_color="red")
-fig_rsi.update_layout(yaxis_range=[0,100], height=100)
-st.plotly_chart(fig_rsi, use_container_width=True)
-
-# 回测
-st.subheader("📊 回测统计")
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric("交易次数", bt["total"])
-c2.metric("胜/负", f"{bt['wins']}/{bt['losses']}")
-c3.metric("胜率", f"{bt['win_rate']:.1f}%")
-c4.metric("平均盈利", f"{bt['avg_win']:.2f}%")
-c5.metric("平均亏损", f"{bt['avg_loss']:.2f}%")
-c6.metric("期望值", f"{bt['expectancy']:.3f}%")
-
-# ==================== 交易计划表 ====================
-st.subheader("📋 交易计划表")
-
-# 当前交易计划
+# 交易计划
 if sig in ["强做多", "弱做多", "强做空", "弱做空"]:
-    # 计算盈亏比
-    if "多" in sig:
-        risk = last["close"] - last["sl"]
-        reward = last["tp"] - last["close"]
-    else:
-        risk = last["sl"] - last["close"]
-        reward = last["close"] - last["tp"]
-    rr_ratio = reward / risk if risk > 0 else 0
-    
-    plan_data = {
-        "信号类型": sig,
-        "入场价": f"${last['close']:.2f}",
-        "止损价": f"${last['sl']:.2f}",
-        "止盈价": f"${last['tp']:.2f}",
-        "止损幅度": f"{abs(risk/last['close']*100):.2f}%",
-        "止盈幅度": f"{abs(reward/last['close']*100):.2f}%",
-        "盈亏比": f"1:{rr_ratio:.1f}",
-        "建议仓位": f"{last_position_size:.0f}%",
-        "突破概率": f"{last_breakout_prob:.0f}%",
-        "状态": "⏳ 待执行"
-    }
-    
-    # 根据信号类型设置颜色
-    if "强做" in sig:
-        st.success("🟢 **当前交易计划**")
-    else:
-        st.info("🟡 **当前交易计划**")
-    
-    plan_df = pd.DataFrame([plan_data])
-    st.dataframe(plan_df, use_container_width=True, hide_index=True)
-    
-    # 风险提示
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("最大亏损", f"-{abs(risk):.2f}", f"-${abs(risk*last_position_size/100):.2f}")
-    with col2:
-        st.metric("最大盈利", f"+{abs(reward):.2f}", f"+${abs(reward*last_position_size/100):.2f}")
-    with col3:
-        st.metric("盈亏比", f"1:{rr_ratio:.1f}")
-else:
-    st.warning("⚪ 当前无交易计划")
-    st.info(f"**原因:** {', '.join(last_reasons) if last_reasons else '条件不满足'}")
-
-# ==================== 交易记录表 ====================
-st.subheader("📝 交易记录表")
-
-# 获取交易记录
-trade_records = bt.get("trade_records", [])
-
-if len(trade_records) > 0:
-    # 统计
-    wins = sum(1 for t in trade_records if "盈利" in t["结果"])
-    losses = sum(1 for t in trade_records if "亏损" in t["结果"])
-    total_pnl = sum(t["盈亏%"] for t in trade_records)
-    
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("总交易", f"{len(trade_records)}笔")
-    col2.metric("胜/负", f"{wins}/{losses}")
-    col3.metric("胜率", f"{wins/len(trade_records)*100:.1f}%")
-    col4.metric("累计盈亏", f"{total_pnl:.2f}%")
-    
-    # 显示交易记录表格
-    records_df = pd.DataFrame(trade_records)
-    
-    # 按时间倒序
-    records_df = records_df.sort_values("时间", ascending=False).head(20)
-    
-    st.dataframe(
-        records_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "入场价": st.column_config.NumberColumn(format="%.2f"),
-            "出场价": st.column_config.NumberColumn(format="%.2f"),
-            "盈亏%": st.column_config.NumberColumn(format="%.2f%%"),
-        }
-    )
-    
-    # 下载按钮
-    csv = pd.DataFrame(trade_records).to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 下载交易记录 (CSV)",
-        data=csv,
-        file_name=f"trade_records_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-        mime="text/csv"
-    )
+    col1.metric("入场价", f"${last['close']:.2f}")
+    col2.metric("止损", f"${last['sl']:.2f}")
+    col3.metric("止盈", f"${last['tp']:.2f}")
+    risk = abs(last['close'] - last['sl'])
+    reward = abs(last['tp'] - last['close'])
+    col4.metric("盈亏比", f"1:{reward/risk:.1f}" if risk > 0 else "N/A")
 else:
-    st.info("暂无交易记录")
+    st.info(f"**原因:** {', '.join(last_reasons)}")
 
-# 参数
-st.sidebar.header("📖 固定参数")
-st.sidebar.info(f"""
-**RSI:** 55/45
-**成交量:** ≥1.5x均量
+st.divider()
+
+# 图表和记录用Tabs
+tab1, tab2, tab3 = st.tabs(["📈 价格走势", "📊 回测统计", "📝 交易记录"])
+
+with tab1:
+    # K线图
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(x=df["time"], open=df["open"], high=df["high"], low=df["low"], close=df["close"],
+                                  increasing_line_color='#26a69a', decreasing_line_color='#ef5350', name="ETH"))
+    fig.add_trace(go.Scatter(x=df["time"], y=df["ema50"], line=dict(color='orange', width=1), name="EMA50"))
+    fig.add_trace(go.Scatter(x=df["time"], y=df["ema200"], line=dict(color='blue', width=2), name="EMA200"))
+    fig.add_hline(y=last["high20"], line_dash="dash", line_color="red", opacity=0.5)
+    fig.add_hline(y=last["low20"], line_dash="dash", line_color="green", opacity=0.5)
+    
+    # 信号标记
+    for s, color, sym in [("强做多","lime",15),("强做空","red",15),("弱做多","lightgreen",8),("弱做空","lightcoral",8)]:
+        mask = df["signal"] == s
+        if mask.any():
+            fig.add_trace(go.Scatter(x=df["time"][mask], y=df["close"][mask], mode="markers",
+                                     marker=dict(symbol="triangle-up" if "多" in s else "triangle-down", size=sym, color=color), name=s))
+    
+    if sig in ["强做多", "弱做多", "强做空", "弱做空"] and last["sl"] > 0:
+        fig.add_hline(y=last["sl"], line_dash="dash", line_color="red", line_width=2)
+        fig.add_hline(y=last["tp"], line_dash="dash", line_color="green", line_width=2)
+    
+    fig.update_layout(template="plotly_dark", height=500, xaxis_rangeslider_visible=False, showlegend=False,
+                      margin=dict(l=10, r=10, t=10, b=10))
+    st.plotly_chart(fig, use_container_width=True)
+
+with tab2:
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("交易次数", bt["total"])
+    c2.metric("胜/负", f"{bt['wins']}/{bt['losses']}")
+    c3.metric("胜率", f"{bt['win_rate']:.1f}%")
+    c4.metric("平均盈利", f"{bt['avg_win']:.2f}%")
+    c5.metric("平均亏损", f"{bt['avg_loss']:.2f}%")
+    c6.metric("期望值", f"{bt['expectancy']:.3f}%")
+
+with tab3:
+    records = bt.get("records", [])
+    if records:
+        st.dataframe(pd.DataFrame(records), use_container_width=True, hide_index=True)
+    else:
+        st.info("暂无交易记录")
+
+# 侧边栏参数
+with st.sidebar:
+    st.markdown("### 📖 策略参数")
+    st.info(f"""
+**RSI阈值:** 55/45
+**成交量:** ≥1.5x
 **波动率:** ≥0.15%
 **止损:** 1.8 ATR
 **止盈:** 2.8 ATR
-**盈亏比:** 1:1.6
-
-★ **关键改进:**
-突破时忽略波动率过滤
-
-★ **突破概率计算:**
-RSI极强 + 成交量放大 + 波动率压缩
-
-**当前突破概率:** {last_breakout_prob:.0f}%
-**胜率:** {bt['win_rate']:.1f}%
-**期望值:** {bt['expectancy']:.3f}%
+**突破概率:** {last_prob:.0f}%
+**当前仓位:** {last_pos}%
 """)
