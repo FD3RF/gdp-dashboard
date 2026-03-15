@@ -508,15 +508,18 @@ elif sig == "弱做多":
     col4.metric("仓位说明", last_position_reason)
     st.warning(f"**原因:** {', '.join(last_reasons)}")
 elif sig == "弱做空":
-    st.info(f"🟡 **弱做空信号** | 信心度: {last_conf*100:.0f}%")
-    col1, col2, col3 = st.columns(3)
+    st.info(f"🟡 **弱做空信号** | 信心度: {last_conf*100:.0f}% | 仓位: {last_position_size:.0f}%")
+    show_position_bar(last_position_size)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("入场价", f"${last['close']:.2f}")
     col2.metric("止损", f"${last['sl']:.2f}")
     col3.metric("止盈", f"${last['tp']:.2f}")
-    st.warning(f"**原因:** {', '.join(last_reasons)}")
+    col4.metric("仓位说明", last_position_reason)
 else:
     st.warning("⚪ **观望**")
     st.markdown(f"**原因:** {', '.join(last_reasons) if last_reasons else '条件不满足'}")
+    show_position_bar(last_position_size)
+    st.info(f"**仓位说明:** {last_position_reason}")
     
     # 显示突破概率
     if last_breakout_prob > 0:
