@@ -7,24 +7,30 @@ from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
 
 # 自动刷新
-st_autorefresh(interval=10000, key="refresh_v8_0")
+st_autorefresh(interval=10000, key="refresh_v8_1")
 
-st.set_page_config(page_title="ETH 5分钟交易系统 v8.0", layout="wide")
+st.set_page_config(page_title="ETH 5分钟交易系统 v8.1", layout="wide")
 
-# ==================== 参数设置 ====================
+# ==================== 参数设置 (优化版) ====================
 st.sidebar.header("⚙️ 参数设置")
 
-st.sidebar.subheader("RSI阈值")
-rsi_long = st.sidebar.slider("做多RSI阈值", 45, 70, 55, 5, help="RSI > 此值才有做多动量")
-rsi_short = st.sidebar.slider("做空RSI阈值", 30, 55, 45, 5, help="RSI < 此值才有做空动量")
+st.sidebar.subheader("RSI阈值 (更严格)")
+rsi_long = st.sidebar.slider("做多RSI阈值", 50, 70, 58, 1, help="RSI > 此值才有做多动量，建议58+")
+rsi_short = st.sidebar.slider("做空RSI阈值", 30, 50, 42, 1, help="RSI < 此值才有做空动量，建议42-")
+
+st.sidebar.subheader("成交量过滤")
+vol_mult = st.sidebar.slider("成交量倍数", 1.0, 2.5, 1.5, 0.1, help="成交量必须 > 均量×倍数")
+
+st.sidebar.subheader("波动率过滤")
+min_volatility = st.sidebar.slider("最小波动率", 0.001, 0.005, 0.002, 0.0005, 
+                                    help="ATR/价格 > 此值才交易，过滤低波动")
 
 st.sidebar.subheader("止损止盈")
-stop_atr_mult = st.sidebar.slider("止损ATR倍数", 0.5, 3.0, 1.5, 0.1)
-take_atr_mult = st.sidebar.slider("止盈ATR倍数", 1.0, 6.0, 3.0, 0.1)
+stop_atr_mult = st.sidebar.slider("止损ATR倍数", 1.0, 3.0, 2.0, 0.1)
+take_atr_mult = st.sidebar.slider("止盈ATR倍数", 1.5, 5.0, 3.0, 0.1)
 
-st.sidebar.subheader("过滤条件")
-require_volume = st.sidebar.checkbox("要求放量确认", True, help="成交量必须 > 均量")
-require_breakout = st.sidebar.checkbox("要求突破确认", True, help="必须突破20周期高低点")
+st.sidebar.subheader("突破确认")
+require_close_confirm = st.sidebar.checkbox("要求收盘确认", True, help="收盘价必须突破，避免影线假突破")
 
 # ==================== 数据获取 ====================
 def generate_mock_data(n=300):
@@ -34,13 +40,13 @@ def generate_mock_data(n=300):
     data = []
     
     for _ in range(n):
-        change = np.random.normal(0, 0.002)
+        change = np.random.normal(0, 0.003)  # 增加波动
         open_p = price
         close_p = price * (1 + change)
-        vol = abs(np.random.normal(0, 0.005))
+        vol = abs(np.random.normal(0, 0.008))
         high_p = max(open_p, close_p) * (1 + vol)
         low_p = min(open_p, close_p) * (1 - vol)
-        volume = np.random.uniform(500, 2000)
+        volume = np.random.uniform(800, 3000)
         data.append([times[_], open_p, high_p, low_p, close_p, volume])
         price = close_p
     
@@ -108,144 +114,144 @@ if df is None or len(df) < 50:
     st.error("无法获取数据")
     st.stop()
 
-# ==================== 核心指标计算 (仅5个) ====================
-# 1. EMA趋势
+# ==================== 核心指标计算 ====================
+# EMA趋势
 df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
 df["ema200"] = df["close"].ewm(span=200, adjust=False).mean()
 
-# 2. RSI
+# RSI
 delta = df["close"].diff()
 gain = delta.where(delta > 0, 0).rolling(14).mean()
 loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
 df["rsi"] = 100 - (100 / (1 + gain / loss.replace(0, np.nan)))
 
-# 3. 成交量
+# 成交量
 df["vol_ma"] = df["volume"].rolling(20).mean()
 
-# 4. ATR (用于止损止盈)
+# ATR
 tr = pd.concat([df["high"]-df["low"], 
                 abs(df["high"]-df["close"].shift(1)), 
                 abs(df["low"]-df["close"].shift(1))], axis=1).max(axis=1)
 df["atr"] = tr.rolling(14).mean()
 
-# 5. 支撑阻力 (用于突破判断)
+# 波动率
+df["volatility"] = df["atr"] / df["close"]
+
+# 支撑阻力
 df["high20"] = df["high"].rolling(20).max()
 df["low20"] = df["low"].rolling(20).min()
 
-# ==================== 趋势判断 ====================
-def get_trend(row):
-    """EMA50 vs EMA200 判断趋势"""
-    if row["ema50"] > row["ema200"]:
-        return "多头"
-    elif row["ema50"] < row["ema200"]:
-        return "空头"
-    else:
-        return "震荡"
-
-# ==================== 信号生成 (简洁版) ====================
+# ==================== 信号生成 (优化逻辑) ====================
 def generate_signal(row):
     """
-    做多条件:
-    1. EMA50 > EMA200 (多头趋势)
-    2. RSI > 55 (多头动量)
-    3. Volume > MA20 (放量)
-    4. 突破20周期高点
-    
-    做空条件:
-    1. EMA50 < EMA200 (空头趋势)
-    2. RSI < 45 (空头动量)
-    3. Volume > MA20 (放量)
-    4. 跌破20周期低点
+    信号触发顺序 (优化):
+    1. 趋势过滤 - EMA50 vs EMA200
+    2. 波动率过滤 - ATR/Price > 阈值
+    3. 动量确认 - RSI
+    4. 成交量确认 - 放量
+    5. 突破触发 - 突破20周期高低点
     """
     signal = "HOLD"
-    reasons = []
+    checks = {}
     
-    trend = get_trend(row)
+    # 1. 趋势过滤
+    trend = "震荡"
+    if row["ema50"] > row["ema200"]:
+        trend = "多头"
+    elif row["ema50"] < row["ema200"]:
+        trend = "空头"
+    checks["趋势"] = trend
+    
+    # 2. 波动率过滤
+    volatility = row["volatility"] if pd.notna(row["volatility"]) else 0
+    vol_ok = volatility > min_volatility
+    checks["波动率"] = f"{volatility*100:.2f}% {'✓' if vol_ok else '✗'}"
+    
+    if not vol_ok:
+        return signal, trend, checks, "波动率过低"
+    
+    # 3. RSI动量
     rsi = row["rsi"] if pd.notna(row["rsi"]) else 50
-    vol_above_ma = row["volume"] > row["vol_ma"] if pd.notna(row["vol_ma"]) else False
-    break_high = row["close"] > row["high20"] if pd.notna(row["high20"]) else False
-    break_low = row["close"] < row["low20"] if pd.notna(row["low20"]) else False
+    checks["RSI"] = f"{rsi:.0f}"
     
-    # 做多判断
+    # 4. 成交量
+    vol_ratio = row["volume"] / row["vol_ma"] if pd.notna(row["vol_ma"]) and row["vol_ma"] > 0 else 0
+    vol_ok = vol_ratio > vol_mult
+    checks["成交量"] = f"{vol_ratio:.1f}x {'✓' if vol_ok else '✗'}"
+    
+    # 5. 突破判断 (收盘确认)
+    close = row["close"]
+    if require_close_confirm:
+        break_high = close > row["high20"]
+        break_low = close < row["low20"]
+    else:
+        break_high = row["high"] > row["high20"]
+        break_low = row["low"] < row["low20"]
+    
+    checks["突破高"] = "✓" if break_high else "✗"
+    checks["突破低"] = "✓" if break_low else "✗"
+    
+    # ===== 做多判断 =====
     if trend == "多头":
-        conditions_met = 1  # 趋势条件已满足
+        conditions = []
         
+        # RSI动量确认
         if rsi > rsi_long:
-            conditions_met += 1
-            reasons.append(f"RSI={rsi:.0f}>{rsi_long}")
+            conditions.append("RSI✓")
         else:
-            reasons.append(f"RSI={rsi:.0f}≤{rsi_long}✗")
+            checks["RSI"] = f"{rsi:.0f}✗ (需>{rsi_long})"
         
-        if require_volume and vol_above_ma:
-            conditions_met += 1
-            reasons.append("放量✓")
-        elif not require_volume:
-            conditions_met += 1
-            reasons.append("放量-")
-        else:
-            reasons.append("缩量✗")
+        # 成交量确认
+        if vol_ok:
+            conditions.append("放量✓")
         
-        if require_breakout and break_high:
-            conditions_met += 1
-            reasons.append("突破✓")
-        elif not require_breakout:
-            conditions_met += 1
-            reasons.append("突破-")
-        else:
-            reasons.append("未突破✗")
+        # 突破确认
+        if break_high:
+            conditions.append("突破✓")
         
-        if conditions_met >= 3:
+        # 至少满足2个条件 + 趋势
+        if len(conditions) >= 2 and rsi > rsi_long and vol_ok:
             signal = "LONG"
     
-    # 做空判断
+    # ===== 做空判断 =====
     elif trend == "空头":
-        conditions_met = 1
+        conditions = []
         
+        # RSI动量确认
         if rsi < rsi_short:
-            conditions_met += 1
-            reasons.append(f"RSI={rsi:.0f}<{rsi_short}")
+            conditions.append("RSI✓")
         else:
-            reasons.append(f"RSI={rsi:.0f}≥{rsi_short}✗")
+            checks["RSI"] = f"{rsi:.0f}✗ (需<{rsi_short})"
         
-        if require_volume and vol_above_ma:
-            conditions_met += 1
-            reasons.append("放量✓")
-        elif not require_volume:
-            conditions_met += 1
-            reasons.append("放量-")
-        else:
-            reasons.append("缩量✗")
+        # 成交量确认
+        if vol_ok:
+            conditions.append("放量✓")
         
-        if require_breakout and break_low:
-            conditions_met += 1
-            reasons.append("跌破✓")
-        elif not require_breakout:
-            conditions_met += 1
-            reasons.append("跌破-")
-        else:
-            reasons.append("未跌破✗")
+        # 突破确认
+        if break_low:
+            conditions.append("跌破✓")
         
-        if conditions_met >= 3:
+        # 至少满足2个条件 + 趋势
+        if len(conditions) >= 2 and rsi < rsi_short and vol_ok:
             signal = "SHORT"
     
-    else:
-        reasons.append("震荡趋势")
-    
-    return signal, trend, reasons
+    block_reason = None if signal != "HOLD" else f"未满足条件"
+    return signal, trend, checks, block_reason
 
 # 应用信号
-signals, trends, all_reasons = [], [], []
+signals, trends, all_checks, block_reasons = [], [], [], []
 for idx, row in df.iterrows():
-    sig, trend, reasons = generate_signal(row)
+    sig, trend, checks, reason = generate_signal(row)
     signals.append(sig)
     trends.append(trend)
-    all_reasons.append(reasons)
+    all_checks.append(checks)
+    block_reasons.append(reason)
 
 df["signal"] = signals
 df["trend"] = trends
-df["reasons"] = all_reasons
+df["checks"] = all_checks
 
-# ==================== 止损止盈计算 ====================
+# ==================== 止损止盈 ====================
 last = df.iloc[-1]
 atr = last["atr"] if pd.notna(last["atr"]) else last["close"] * 0.01
 
@@ -260,17 +266,17 @@ elif last["signal"] == "SHORT":
 else:
     stop_loss = take_profit = risk_reward = None
 
-# ==================== 回测 (ATR止损止盈) ====================
+# ==================== 回测 ====================
 def backtest(df, lookback=100, max_bars=30):
     recent = df.tail(lookback).copy()
     signals = recent[recent["signal"].isin(["LONG", "SHORT"])]
     
     if len(signals) == 0:
         return {"total": 0, "wins": 0, "losses": 0, "win_rate": 0, 
-                "signal_freq": 0, "avg_pnl": 0}
+                "signal_freq": 0, "avg_pnl": 0, "avg_win": 0, "avg_loss": 0}
     
     wins, losses = 0, 0
-    pnls = []
+    win_pnls, loss_pnls = [], []
     
     for idx, row in signals.iterrows():
         pos = df.index.get_loc(idx)
@@ -285,11 +291,11 @@ def backtest(df, lookback=100, max_bars=30):
             tp = entry + take_atr_mult * atr_val
             for j in range(pos + 1, min(pos + max_bars + 1, len(df))):
                 if df.iloc[j]["low"] <= sl:
-                    pnls.append((sl - entry) / entry * 100)
+                    loss_pnls.append((sl - entry) / entry * 100)
                     losses += 1
                     break
                 if df.iloc[j]["high"] >= tp:
-                    pnls.append((tp - entry) / entry * 100)
+                    win_pnls.append((tp - entry) / entry * 100)
                     wins += 1
                     break
         else:
@@ -297,11 +303,11 @@ def backtest(df, lookback=100, max_bars=30):
             tp = entry - take_atr_mult * atr_val
             for j in range(pos + 1, min(pos + max_bars + 1, len(df))):
                 if df.iloc[j]["high"] >= sl:
-                    pnls.append((entry - sl) / entry * 100)
+                    loss_pnls.append((entry - sl) / entry * 100)
                     losses += 1
                     break
                 if df.iloc[j]["low"] <= tp:
-                    pnls.append((entry - tp) / entry * 100)
+                    win_pnls.append((entry - tp) / entry * 100)
                     wins += 1
                     break
     
@@ -312,21 +318,23 @@ def backtest(df, lookback=100, max_bars=30):
         "wins": wins,
         "losses": losses,
         "win_rate": (wins / total * 100) if total > 0 else 0,
-        "avg_pnl": np.mean(pnls) if pnls else 0
+        "avg_win": np.mean(win_pnls) if win_pnls else 0,
+        "avg_loss": np.mean(loss_pnls) if loss_pnls else 0,
+        "avg_pnl": np.mean(win_pnls + loss_pnls) if (win_pnls or loss_pnls) else 0
     }
 
 bt = backtest(df, 100, 30)
 
 # ==================== UI展示 ====================
-st.title("📊 ETH 5分钟交易系统 v8.0 精简版")
+st.title("📊 ETH 5分钟交易系统 v8.1 优化版")
 st.markdown(f"**数据源:** {data_source} | **价格:** ${last['close']:.2f} | **时间:** {last['time'].strftime('%Y-%m-%d %H:%M')}")
 
 # 核心指标
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("ETH价格", f"${last['close']:.2f}")
-c2.metric("趋势", get_trend(last))
-c3.metric("RSI 14", f"{last['rsi']:.1f}" if pd.notna(last['rsi']) else "N/A")
-c4.metric("ATR", f"${atr:.2f}")
+c2.metric("趋势", df.iloc[-1]["trend"])
+c3.metric("RSI", f"{last['rsi']:.0f}" if pd.notna(last['rsi']) else "N/A")
+c4.metric("波动率", f"{last['volatility']*100:.2f}%")
 c5.metric("信号频率", f"{bt['signal_freq']:.1f}%")
 
 # 信号显示
@@ -347,48 +355,54 @@ elif last["signal"] == "SHORT":
     col4.metric("盈亏比", f"{risk_reward:.1f}:1")
 else:
     st.warning("⚪ **观望**")
-    st.markdown(f"**原因:** {', '.join(last['reasons'])}")
+    last_checks = last["checks"]
+    st.markdown(f"""
+    **条件检查:**
+    - 趋势: {last_checks.get('趋势', 'N/A')}
+    - 波动率: {last_checks.get('波动率', 'N/A')}
+    - RSI: {last_checks.get('RSI', 'N/A')}
+    - 成交量: {last_checks.get('成交量', 'N/A')}
+    - 突破高: {last_checks.get('突破高', 'N/A')}
+    - 突破低: {last_checks.get('突破低', 'N/A')}
+    """)
 
 # 条件检查表
 st.subheader("📋 条件检查")
-cond_cols = st.columns(4)
+checks = last["checks"]
+cols = st.columns(6)
 
-# 趋势
-trend_ok = last["ema50"] > last["ema200"]
-cond_cols[0].metric("趋势", "多头✓" if trend_ok else "空头✓" if last["ema50"] < last["ema200"] else "震荡✗")
+trend_ok = checks.get("趋势", "震荡") != "震荡"
+cols[0].metric("趋势", checks.get("趋势", "N/A"), delta="✓" if trend_ok else "✗")
 
-# RSI
-rsi_v = last["rsi"] if pd.notna(last["rsi"]) else 50
-rsi_ok = rsi_v > rsi_long if trend_ok else rsi_v < rsi_short if last["ema50"] < last["ema200"] else False
-cond_cols[1].metric("RSI动量", f"{rsi_v:.0f} {'✓' if rsi_ok else '✗'}")
+vol_ok = "✓" in checks.get("波动率", "")
+cols[1].metric("波动率", checks.get("波动率", "N/A"), delta="✓" if vol_ok else "✗")
 
-# 成交量
-vol_ok = last["volume"] > last["vol_ma"] if pd.notna(last["vol_ma"]) else False
-cond_cols[2].metric("成交量", "放量✓" if vol_ok else "缩量✗")
+rsi = last["rsi"] if pd.notna(last["rsi"]) else 50
+rsi_ok = (rsi > rsi_long) if checks.get("趋势") == "多头" else (rsi < rsi_short) if checks.get("趋势") == "空头" else False
+cols[2].metric("RSI动量", checks.get("RSI", "N/A"), delta="✓" if rsi_ok else "✗")
 
-# 突破
-break_ok = (last["close"] > last["high20"]) if trend_ok else (last["close"] < last["low20"]) if last["ema50"] < last["ema200"] else False
-cond_cols[3].metric("突破", "已突破✓" if break_ok else "未突破✗")
+vol_ratio = last["volume"] / last["vol_ma"] if pd.notna(last["vol_ma"]) and last["vol_ma"] > 0 else 0
+vol_str_ok = vol_ratio > vol_mult
+cols[3].metric("成交量", f"{vol_ratio:.1f}x", delta="✓" if vol_str_ok else "✗")
+
+cols[4].metric("突破高", checks.get("突破高", "N/A"))
+cols[5].metric("突破低", checks.get("突破低", "N/A"))
 
 # K线图
 st.subheader("📈 价格走势")
 fig = go.Figure()
 
-# K线
 fig.add_trace(go.Candlestick(
     x=df["time"], open=df["open"], high=df["high"], low=df["low"], close=df["close"],
     name="K线", increasing_line_color='#26a69a', decreasing_line_color='#ef5350'
 ))
 
-# EMA
 fig.add_trace(go.Scatter(x=df["time"], y=df["ema50"], name="EMA50", line=dict(color='orange', width=1.5)))
 fig.add_trace(go.Scatter(x=df["time"], y=df["ema200"], name="EMA200", line=dict(color='blue', width=2)))
 
-# 支撑阻力
 fig.add_hline(y=last["high20"], line_dash="dash", line_color="red", opacity=0.6, annotation_text="阻力")
 fig.add_hline(y=last["low20"], line_dash="dash", line_color="green", opacity=0.6, annotation_text="支撑")
 
-# 信号标记
 for sig, color, sym in [("LONG", "green", "triangle-up"), ("SHORT", "red", "triangle-down")]:
     mask = df["signal"] == sig
     if mask.any():
@@ -407,8 +421,9 @@ st.plotly_chart(fig, use_container_width=True)
 # 成交量
 fig_vol = go.Figure()
 fig_vol.add_trace(go.Bar(x=df["time"], y=df["volume"], name="成交量", marker_color='lightgray'))
+fig_vol.add_trace(go.Scatter(x=df["time"], y=df["vol_ma"] * vol_mult, name=f"均量×{vol_mult}", line=dict(color='red', dash='dash')))
 fig_vol.add_trace(go.Scatter(x=df["time"], y=df["vol_ma"], name="均量20", line=dict(color='blue')))
-fig_vol.update_layout(title="成交量", height=120, showlegend=False)
+fig_vol.update_layout(title="成交量", height=120, showlegend=True)
 st.plotly_chart(fig_vol, use_container_width=True)
 
 # RSI
@@ -422,11 +437,12 @@ st.plotly_chart(fig_rsi, use_container_width=True)
 
 # 回测统计
 st.subheader("📊 回测统计")
-c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("交易次数", bt["total"])
 c2.metric("盈利/亏损", f"{bt['wins']}/{bt['losses']}")
 c3.metric("胜率", f"{bt['win_rate']:.1f}%")
-c4.metric("平均盈亏", f"{bt['avg_pnl']:.2f}%")
+c4.metric("平均盈利", f"{bt['avg_win']:.2f}%")
+c5.metric("平均亏损", f"{bt['avg_loss']:.2f}%")
 
 # 最近信号
 st.subheader("📋 最近信号")
@@ -442,21 +458,18 @@ else:
 # 策略说明
 st.sidebar.markdown("---")
 st.sidebar.subheader("📖 策略说明")
-st.sidebar.info("""
-**做多条件:**
-1. EMA50 > EMA200 (多头趋势)
-2. RSI > 55 (多头动量)
-3. 成交量 > 均量
-4. 突破20周期高点
-
-**做空条件:**
-1. EMA50 < EMA200 (空头趋势)
-2. RSI < 45 (空头动量)
-3. 成交量 > 均量
-4. 跌破20周期低点
+st.sidebar.info(f"""
+**信号触发顺序:**
+1. 趋势过滤 (EMA50 vs EMA200)
+2. 波动率过滤 (>{min_volatility*100:.1f}%)
+3. RSI动量确认 (>{rsi_long} / <{rsi_short})
+4. 成交量确认 (>{vol_mult}x均量)
+5. 突破触发 (20周期高低点)
 
 **风控:**
-- 止损 = 1.5 × ATR
-- 止盈 = 3.0 × ATR
-- 盈亏比 = 1:2
+- 止损 = {stop_atr_mult} × ATR
+- 止盈 = {take_atr_mult} × ATR
+- 盈亏比 = 1:{take_atr_mult/stop_atr_mult:.1f}
+
+**当前胜率:** {bt['win_rate']:.1f}%
 """)
