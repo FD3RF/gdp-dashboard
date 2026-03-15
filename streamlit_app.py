@@ -7,9 +7,9 @@ from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
 
 # 自动刷新
-st_autorefresh(interval=10000, key="refresh_v9_2")
+st_autorefresh(interval=10000, key="refresh_v9_3")
 
-st.set_page_config(page_title="ETH 5分钟量化交易系统 v9.2", layout="wide")
+st.set_page_config(page_title="ETH 5分钟量化交易系统 v9.3", layout="wide")
 
 # ==================== 核心信号函数 ====================
 def get_eth_signal(kline, atr, avg_volume, params=None):
@@ -162,6 +162,66 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
     else:
         reasons.append("横盘趋势")
     
+    # ===== 突破概率计算 =====
+    # 当出现：RSI极强 + 成交量放大 + 波动率压缩 → 高突破概率
+    breakout_prob = 0.0
+    
+    if trend_dir > 0:  # 多头趋势
+        # 基础概率
+        prob = 0
+        
+        # RSI动量贡献 (0-30%)
+        if rsi >= 80:
+            prob += 30
+        elif rsi >= 70:
+            prob += 20
+        elif rsi >= 60:
+            prob += 10
+        
+        # 成交量贡献 (0-35%)
+        if vol_ratio >= 3.0:
+            prob += 35
+        elif vol_ratio >= 2.0:
+            prob += 25
+        elif vol_ratio >= 1.5:
+            prob += 15
+        
+        # 波动率压缩贡献 (0-35%) - 压缩越紧，突破概率越高
+        if volatility < 0.001:  # 极端压缩
+            prob += 35
+        elif volatility < 0.0015:  # 中度压缩
+            prob += 25
+        elif volatility < 0.002:  # 轻度压缩
+            prob += 15
+        
+        breakout_prob = min(prob, 95)
+        
+    elif trend_dir < 0:  # 空头趋势
+        prob = 0
+        
+        if rsi <= 20:
+            prob += 30
+        elif rsi <= 30:
+            prob += 20
+        elif rsi <= 40:
+            prob += 10
+        
+        if vol_ratio >= 3.0:
+            prob += 35
+        elif vol_ratio >= 2.0:
+            prob += 25
+        elif vol_ratio >= 1.5:
+            prob += 15
+        
+        if volatility < 0.001:
+            prob += 35
+        elif volatility < 0.0015:
+            prob += 25
+        elif volatility < 0.002:
+            prob += 15
+        
+        breakout_prob = min(prob, 95)
+    
     return {
         "signal": signal,
         "trend": trend,
@@ -173,6 +233,7 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
         "vol_ratio": vol_ratio,
         "breakout_long": breakout_long,
         "breakout_short": breakout_short,
+        "breakout_prob": breakout_prob,
         "reasons": reasons
     }
 
@@ -256,7 +317,7 @@ params = {
     "take_profit_mult": 2.8
 }
 
-signals, trends, sls, tps, confs, vols, vol_ratios, reasons_list = [], [], [], [], [], [], [], []
+signals, trends, sls, tps, confs, vols, vol_ratios, reasons_list, breakout_probs = [], [], [], [], [], [], [], [], []
 
 for idx, row in df.iterrows():
     kline = {
@@ -281,6 +342,7 @@ for idx, row in df.iterrows():
     vols.append(result["volatility"])
     vol_ratios.append(result["vol_ratio"])
     reasons_list.append(result["reasons"])
+    breakout_probs.append(result["breakout_prob"])
 
 df["signal"] = signals
 df["trend"] = trends
@@ -349,17 +411,19 @@ last_reasons = reasons_list[-2]
 last_vol = vol_ratios[-2]
 last_volatility = vols[-2]
 last_conf = confs[-2]
+last_breakout_prob = breakout_probs[-2]
 
-st.title("📊 ETH 5分钟量化交易系统 v9.2")
+st.title("📊 ETH 5分钟量化交易系统 v9.3")
 st.markdown(f"**{data_source}** | **${last['close']:.2f}** | **{last['time'].strftime('%Y-%m-%d %H:%M')}**")
 
 # 指标
-c1, c2, c3, c4, c5 = st.columns(5)
+c1, c2, c3, c4, c5, c6 = st.columns(6)
 c1.metric("价格", f"${last['close']:.2f}")
 c2.metric("趋势", last["trend"])
 c3.metric("RSI", f"{last['rsi']:.0f}")
 c4.metric("波动率", f"{last_volatility*100:.2f}%")
-c5.metric("信号频率", f"{bt['freq']:.1f}%")
+c5.metric("成交量", f"{last_vol:.1f}x")
+c6.metric("信号频率", f"{bt['freq']:.1f}%")
 
 # 信号
 st.subheader("🎯 交易信号")
@@ -398,6 +462,19 @@ elif sig == "弱做空":
 else:
     st.warning("⚪ **观望**")
     st.markdown(f"**原因:** {', '.join(last_reasons) if last_reasons else '条件不满足'}")
+    
+    # 显示突破概率
+    if last_breakout_prob > 0:
+        prob_color = "🔴" if last_breakout_prob >= 70 else "🟡" if last_breakout_prob >= 50 else "🟢"
+        st.markdown(f"### {prob_color} **突破概率: {last_breakout_prob:.0f}%**")
+        
+        # 概率解释
+        if last_breakout_prob >= 70:
+            st.success("🔥 **高概率突破形态** - RSI极强 + 成交量放大 + 波动率压缩")
+        elif last_breakout_prob >= 50:
+            st.info("📊 **中等突破概率** - 部分条件满足")
+        else:
+            st.caption("📈 突破概率较低，继续等待")
 
 # 条件检查
 st.subheader("📋 条件检查")
@@ -472,6 +549,10 @@ st.sidebar.info(f"""
 ★ **关键改进:**
 突破时忽略波动率过滤
 
+★ **突破概率计算:**
+RSI极强 + 成交量放大 + 波动率压缩
+
+**当前突破概率:** {last_breakout_prob:.0f}%
 **胜率:** {bt['win_rate']:.1f}%
 **期望值:** {bt['expectancy']:.3f}%
 """)
