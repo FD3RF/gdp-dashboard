@@ -211,7 +211,10 @@ def get_data(limit=500):
             if os.path.exists(path):
                 df = pd.read_csv(path)
                 if len(df) > 300:
-                    if "time" in df.columns:
+                    # 处理时间列（可能是time或datetime）
+                    if "datetime" in df.columns:
+                        df["time"] = pd.to_datetime(df["datetime"])
+                    elif "time" in df.columns:
                         df["time"] = pd.to_datetime(df["time"])
                     for col in ["open","high","low","close","volume"]: 
                         if col in df.columns: 
