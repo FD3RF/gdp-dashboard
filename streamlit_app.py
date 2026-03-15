@@ -687,144 +687,135 @@ st.divider()
 tab1, tab2, tab3 = st.tabs(["📈 价格走势", "📊 回测统计", "📝 交易记录"])
 
 with tab1:
-    # K线图
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(x=df["time"], open=df["open"], high=df["high"], low=df["low"], close=df["close"],
-                                  increasing_line_color='#26a69a', decreasing_line_color='#ef5350', name="ETH"))
-    fig.add_trace(go.Scatter(x=df["time"], y=df["ema20"], line=dict(color='yellow', width=1), name="EMA20"))
-    fig.add_trace(go.Scatter(x=df["time"], y=df["ema50"], line=dict(color='orange', width=1.5), name="EMA50"))
-    fig.add_trace(go.Scatter(x=df["time"], y=df["ema200"], line=dict(color='blue', width=2), name="EMA200"))
+    # ==================== 专业K线图（子图版）====================
+    from plotly.subplots import make_subplots
     
-    # 支撑阻力线
-    fig.add_hline(y=last["high20"], line_dash="dash", line_color="red", opacity=0.5, annotation_text="阻力")
-    fig.add_hline(y=last["low20"], line_dash="dash", line_color="green", opacity=0.5, annotation_text="支撑")
+    # 创建子图：主图（价格） + 副图（成交量）
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.03,
+        row_heights=[0.7, 0.3]
+    )
     
-    # ===== 四种信号标记 =====
-    # 1️⃣ 抄底信号 (RSI<=30 + 放量) - 绿色向上箭头
+    # 1. 主图：蜡烛图
+    fig.add_trace(go.Candlestick(
+        x=df["time"],
+        open=df["open"],
+        high=df["high"],
+        low=df["low"],
+        close=df["close"],
+        name='ETH',
+        showlegend=False,
+        increasing_line_color='#26a69a',
+        decreasing_line_color='#ef5350'
+    ), row=1, col=1)
+    
+    # 2. 添加EMA线
+    for ema, color, width in [('ema20', 'yellow', 1), ('ema50', 'orange', 1.5), ('ema200', 'blue', 2)]:
+        if ema in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df["time"],
+                y=df[ema],
+                mode='lines',
+                name=ema.upper(),
+                line=dict(color=color, width=width)
+            ), row=1, col=1)
+    
+    # 3. 支撑/阻力水平线
+    fig.add_hline(y=last["high20"], line_dash="dash", line_color="red", opacity=0.7, 
+                  annotation_text="阻力", row=1, col=1)
+    fig.add_hline(y=last["low20"], line_dash="dash", line_color="green", opacity=0.7,
+                  annotation_text="支撑", row=1, col=1)
+    
+    # ===== 4. 信号标记 =====
+    # 信号条件计算
     buy_dip = (df["rsi9"] <= 30) & (df["volume"] >= df["vol_ma"] * 1.5)
-    if buy_dip.any():
-        fig.add_trace(go.Scatter(
-            x=df["time"][buy_dip], y=df["low"][buy_dip] * 0.997,
-            mode="markers+text", text="💰", textposition="bottom center",
-            marker=dict(symbol="arrow-up", size=12, color="lime"),
-            name="抄底"
-        ))
-    
-    # 2️⃣ 逃顶信号 (RSI>=70 + 放量) - 红色向下箭头
     escape_top = (df["rsi9"] >= 70) & (df["volume"] >= df["vol_ma"] * 1.5)
-    if escape_top.any():
-        fig.add_trace(go.Scatter(
-            x=df["time"][escape_top], y=df["high"][escape_top] * 1.003,
-            mode="markers+text", text="⚠️", textposition="top center",
-            marker=dict(symbol="arrow-down", size=12, color="red"),
-            name="逃顶"
-        ))
-    
-    # 3️⃣ 区间支撑/阻力信号 - 黄色菱形
-    # 支撑反弹
     support_bounce = (df["close"] <= df["low20"] * 1.005) & (df["rsi"] < 40)
-    if support_bounce.any():
-        fig.add_trace(go.Scatter(
-            x=df["time"][support_bounce], y=df["low"][support_bounce] * 0.998,
-            mode="markers", marker=dict(symbol="diamond", size=10, color="yellow", opacity=0.8),
-            name="支撑反弹"
-        ))
-    
-    # 阻力回落
     resist_fall = (df["close"] >= df["high20"] * 0.995) & (df["rsi"] > 60)
-    if resist_fall.any():
-        fig.add_trace(go.Scatter(
-            x=df["time"][resist_fall], y=df["high"][resist_fall] * 1.002,
-            mode="markers", marker=dict(symbol="diamond", size=10, color="orange", opacity=0.8),
-            name="阻力回落"
-        ))
-    
-    # 4️⃣ 趋势波段回调信号 - 蓝色圆点
-    # 多头回调
     pullback_long = (df["ema20"] > df["ema60"]) & (df["close"] >= df["ema20"] * 0.995) & (df["close"] <= df["ema20"] * 1.005)
-    if pullback_long.any():
-        fig.add_trace(go.Scatter(
-            x=df["time"][pullback_long], y=df["low"][pullback_long] * 0.999,
-            mode="markers", marker=dict(symbol="circle", size=8, color="cyan"),
-            name="回调买点"
-        ))
-    
-    # 空头回调
     pullback_short = (df["ema20"] < df["ema60"]) & (df["close"] >= df["ema20"] * 0.995) & (df["close"] <= df["ema20"] * 1.005)
-    if pullback_short.any():
-        fig.add_trace(go.Scatter(
-            x=df["time"][pullback_short], y=df["high"][pullback_short] * 1.001,
-            mode="markers", marker=dict(symbol="circle", size=8, color="magenta"),
-            name="回调卖点"
-        ))
     
-    # 交易信号标记 (强/中信号)
-    signal_colors = [
-        ("强做多", "lime", 15), ("强做空", "red", 15),
-        ("中做多", "cyan", 12), ("中做空", "orange", 12),
+    # 计算偏移量
+    price_range = df['high'].max() - df['low'].min()
+    offset = price_range * 0.01
+    
+    # 信号样式定义
+    signal_styles = [
+        # (条件, 名称, 颜色, 符号, Y位置计算)
+        (buy_dip, "抄底", "lime", "triangle-up", lambda d: d["low"] - offset),
+        (escape_top, "逃顶", "red", "triangle-down", lambda d: d["high"] + offset),
+        (support_bounce, "支撑反弹", "yellow", "diamond", lambda d: d["low"] - offset * 0.5),
+        (resist_fall, "阻力回落", "orange", "diamond", lambda d: d["high"] + offset * 0.5),
+        (pullback_long, "回调买点", "cyan", "circle", lambda d: d["low"] - offset * 0.3),
+        (pullback_short, "回调卖点", "magenta", "circle", lambda d: d["high"] + offset * 0.3),
     ]
-    for s, color, sz in signal_colors:
+    
+    for condition, name, color, symbol, y_calc in signal_styles:
+        subset = df[condition]
+        if len(subset) > 0:
+            fig.add_trace(go.Scatter(
+                x=subset["time"],
+                y=y_calc(subset),
+                mode='markers',
+                marker=dict(symbol=symbol, size=10, color=color, line=dict(width=1, color='white')),
+                name=name,
+                showlegend=True
+            ), row=1, col=1)
+    
+    # 交易信号标记
+    for s, color, sz in [("强做多", "lime", 14), ("强做空", "red", 14), 
+                          ("中做多", "cyan", 11), ("中做空", "orange", 11)]:
         mask = df["signal"] == s
         if mask.any():
             fig.add_trace(go.Scatter(
                 x=df["time"][mask], y=df["close"][mask],
-                mode="markers", marker=dict(symbol="triangle-up" if "多" in s else "triangle-down", size=sz, color=color),
+                mode="markers", 
+                marker=dict(symbol="triangle-up" if "多" in s else "triangle-down", size=sz, color=color),
                 name=s
-            ))
+            ), row=1, col=1)
     
     # 当前止损止盈线
-    trade_signals = ["强做多", "强做空", "中做多", "中做空"]
-    if sig in trade_signals and last["sl"] > 0:
-        fig.add_hline(y=last["sl"], line_dash="dash", line_color="red", line_width=2, annotation_text="SL")
-        fig.add_hline(y=last["tp"], line_dash="dash", line_color="green", line_width=2, annotation_text="TP")
+    trade_signals_list = ["强做多", "强做空", "中做多", "中做空"]
+    if sig in trade_signals_list and last["sl"] > 0:
+        fig.add_hline(y=last["sl"], line_dash="dash", line_color="red", line_width=2, 
+                      annotation_text="SL", row=1, col=1)
+        fig.add_hline(y=last["tp"], line_dash="dash", line_color="green", line_width=2,
+                      annotation_text="TP", row=1, col=1)
     
-    # 图例说明
-    legend_text = """
-    📊 信号说明:
-    💰 抄底信号 | ⚠️ 逃顶信号 | ◆ 支撑/阻力 | ● 回调买点
-    ▲ 做多信号 | ▼ 做空信号
-    """
+    # 5. 成交量图
+    colors = ['#ef5350' if row['open'] > row['close'] else '#26a69a' for _, row in df.iterrows()]
+    fig.add_trace(go.Bar(
+        x=df["time"],
+        y=df["volume"],
+        name='成交量',
+        marker_color=colors,
+        showlegend=False
+    ), row=2, col=1)
     
-    # ★ 动态设置Y轴范围（根据最近100根有效K线）
-    # 过滤掉价格为0或异常的K线
-    df_plot = df[df['high'] > 0].copy()
+    # 6. 布局美化
+    fig.update_layout(
+        title='ETH 5分钟K线图',
+        hovermode='x unified',
+        template='plotly_dark',
+        height=700,
+        margin=dict(l=50, r=50, t=50, b=50),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        xaxis_rangeslider_visible=False
+    )
     
+    # 设置Y轴范围
+    df_plot = df[df['high'] > 0]
     if len(df_plot) > 0:
         n = min(100, len(df_plot))
         recent_high = float(df_plot['high'].tail(n).max())
         recent_low = float(df_plot['low'].tail(n).min())
-        
-        # 计算边距（至少10美元）
-        price_range = recent_high - recent_low
-        padding = max(price_range * 0.1, 10)  # 10%边距或至少10美元
-        
-        y_min = recent_low - padding
-        y_max = recent_high + padding
-        
-        # 更新布局（包含Y轴范围）
-        fig.update_layout(
-            template="plotly_dark", 
-            height=550, 
-            xaxis_rangeslider_visible=False,
-            showlegend=True, 
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            margin=dict(l=10, r=10, t=30, b=10),
-            yaxis=dict(
-                range=[y_min, y_max],
-                title="价格 (USDT)",
-                autorange=False
-            )
-        )
-    else:
-        # 如果没有有效数据，使用默认设置
-        fig.update_layout(
-            template="plotly_dark", 
-            height=550, 
-            xaxis_rangeslider_visible=False,
-            showlegend=True, 
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            margin=dict(l=10, r=10, t=30, b=10)
-        )
+        padding = max((recent_high - recent_low) * 0.1, 10)
+        fig.update_yaxes(range=[recent_low - padding, recent_high + padding], row=1, col=1)
+    
+    fig.update_yaxes(title_text="价格 (USDT)", row=1, col=1)
+    fig.update_yaxes(title_text="成交量", row=2, col=1)
     
     st.plotly_chart(fig, width='stretch')
     
