@@ -222,6 +222,43 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
         
         breakout_prob = min(prob, 95)
     
+    # ===== 仓位自动计算 =====
+    # 根据信号强度自动计算建议仓位
+    position_size = 0.0
+    position_reason = ""
+    
+    if signal == "强做多" or signal == "强做空":
+        # 强信号: 全部条件满足 → 100%仓位
+        position_size = 100.0
+        position_reason = "强信号全仓"
+    elif signal == "弱做多" or signal == "弱做空":
+        if volume_ok:
+            # 弱信号但放量 → 70%仓位
+            position_size = 70.0
+            position_reason = "放量趋势70%"
+        elif vol_ratio >= 1.0:
+            # 弱信号中等量 → 50%仓位
+            position_size = 50.0
+            position_reason = "中等量50%"
+        else:
+            # 弱信号缩量 → 35%仓位
+            position_size = 35.0
+            position_reason = "缩量轻仓35%"
+    else:
+        # 观望状态
+        if breakout_prob >= 70:
+            # 高突破概率 → 20%试探仓位
+            position_size = 20.0
+            position_reason = "高概率试探20%"
+        elif breakout_prob >= 50:
+            # 中等突破概率 → 10%试探
+            position_size = 10.0
+            position_reason = "中概率试探10%"
+        else:
+            # 低突破概率 → 空仓
+            position_size = 0.0
+            position_reason = "空仓观望"
+    
     return {
         "signal": signal,
         "trend": trend,
@@ -234,6 +271,8 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
         "breakout_long": breakout_long,
         "breakout_short": breakout_short,
         "breakout_prob": breakout_prob,
+        "position_size": position_size,
+        "position_reason": position_reason,
         "reasons": reasons
     }
 
@@ -317,7 +356,7 @@ params = {
     "take_profit_mult": 2.8
 }
 
-signals, trends, sls, tps, confs, vols, vol_ratios, reasons_list, breakout_probs = [], [], [], [], [], [], [], [], []
+signals, trends, sls, tps, confs, vols, vol_ratios, reasons_list, breakout_probs, position_sizes, position_reasons = [], [], [], [], [], [], [], [], [], [], []
 
 for idx, row in df.iterrows():
     kline = {
@@ -343,6 +382,8 @@ for idx, row in df.iterrows():
     vol_ratios.append(result["vol_ratio"])
     reasons_list.append(result["reasons"])
     breakout_probs.append(result["breakout_prob"])
+    position_sizes.append(result["position_size"])
+    position_reasons.append(result["position_reason"])
 
 df["signal"] = signals
 df["trend"] = trends
@@ -412,45 +453,59 @@ last_vol = vol_ratios[-2]
 last_volatility = vols[-2]
 last_conf = confs[-2]
 last_breakout_prob = breakout_probs[-2]
+last_position_size = position_sizes[-2]
+last_position_reason = position_reasons[-2]
 
-st.title("📊 ETH 5分钟量化交易系统 v9.3")
+st.title("📊 ETH 5分钟量化交易系统 v9.5")
 st.markdown(f"**{data_source}** | **${last['close']:.2f}** | **{last['time'].strftime('%Y-%m-%d %H:%M')}**")
 
 # 指标
-c1, c2, c3, c4, c5, c6 = st.columns(6)
+c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
 c1.metric("价格", f"${last['close']:.2f}")
 c2.metric("趋势", last["trend"])
 c3.metric("RSI", f"{last['rsi']:.0f}")
 c4.metric("波动率", f"{last_volatility*100:.2f}%")
 c5.metric("成交量", f"{last_vol:.1f}x")
-c6.metric("信号频率", f"{bt['freq']:.1f}%")
+c6.metric("建议仓位", f"{last_position_size:.0f}%")
+c7.metric("信号频率", f"{bt['freq']:.1f}%")
 
-# 信号
+# 信号与仓位
 st.subheader("🎯 交易信号")
 sig = last["signal"]
 
+# 仓位条显示
+def show_position_bar(size):
+    """显示仓位进度条"""
+    if size > 0:
+        color = "green" if "多" in sig else "red" if "空" in sig else "gray"
+        st.progress(size/100, text=f"建议仓位: {size:.0f}%")
+
 if sig == "强做多":
-    st.success(f"🟢 **强做多信号** | 信心度: {last_conf*100:.0f}%")
+    st.success(f"🟢 **强做多信号** | 信心度: {last_conf*100:.0f}% | 仓位: {last_position_size:.0f}%")
+    show_position_bar(last_position_size)
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("入场价", f"${last['close']:.2f}")
     col2.metric("止损", f"${last['sl']:.2f}")
     col3.metric("止盈", f"${last['tp']:.2f}")
     col4.metric("盈亏比", "1:1.6")
-    st.info(f"**原因:** {', '.join(last_reasons)}")
+    st.info(f"**仓位说明:** {last_position_reason} | **原因:** {', '.join(last_reasons)}")
 elif sig == "强做空":
-    st.error(f"🔴 **强做空信号** | 信心度: {last_conf*100:.0f}%")
+    st.error(f"🔴 **强做空信号** | 信心度: {last_conf*100:.0f}% | 仓位: {last_position_size:.0f}%")
+    show_position_bar(last_position_size)
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("入场价", f"${last['close']:.2f}")
     col2.metric("止损", f"${last['sl']:.2f}")
     col3.metric("止盈", f"${last['tp']:.2f}")
     col4.metric("盈亏比", "1:1.6")
-    st.info(f"**原因:** {', '.join(last_reasons)}")
+    st.info(f"**仓位说明:** {last_position_reason} | **原因:** {', '.join(last_reasons)}")
 elif sig == "弱做多":
-    st.info(f"🟡 **弱做多信号** | 信心度: {last_conf*100:.0f}%")
-    col1, col2, col3 = st.columns(3)
+    st.info(f"🟡 **弱做多信号** | 信心度: {last_conf*100:.0f}% | 仓位: {last_position_size:.0f}%")
+    show_position_bar(last_position_size)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("入场价", f"${last['close']:.2f}")
     col2.metric("止损", f"${last['sl']:.2f}")
     col3.metric("止盈", f"${last['tp']:.2f}")
+    col4.metric("仓位说明", last_position_reason)
     st.warning(f"**原因:** {', '.join(last_reasons)}")
 elif sig == "弱做空":
     st.info(f"🟡 **弱做空信号** | 信心度: {last_conf*100:.0f}%")
