@@ -15,10 +15,14 @@ st_autorefresh(interval=10000, key="refresh_v9_7")
 
 st.set_page_config(page_title="ETH 5分钟量化交易系统", layout="wide", initial_sidebar_state="collapsed")
 
-# ==================== v10 AI评分信号系统 ====================
+# ==================== v10.1 优化版信号系统 ====================
 def get_eth_signal(kline, atr, avg_volume, params=None):
     """
-    v10版本: AI评分模型 + 两级信号 + 震荡策略 + 动态仓位
+    v10.1优化版: 
+    - 增加60-70分信号仓位
+    - 过滤弱信号(<60分)
+    - 优化做空逻辑
+    - 改进震荡策略
     """
     close = kline["close"]
     ema50 = kline["ema50"]
@@ -45,20 +49,20 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
         score += 20
         score_details.append("趋势+20")
     elif trend_dir < 0:
-        score += 10  # 空头给10分
+        score += 10
         score_details.append("趋势+10")
 
-    # RSI分 (20分)
+    # RSI分 (20分) - 多头更宽松，空头更严格
     if trend_dir > 0:  # 多头
         if rsi >= 70: score += 20
         elif rsi >= 60: score += 15
         elif rsi >= 55: score += 10
         elif rsi >= 50: score += 5
-    elif trend_dir < 0:  # 空头
-        if rsi <= 30: score += 20
-        elif rsi <= 40: score += 15
-        elif rsi <= 45: score += 10
-        elif rsi <= 50: score += 5
+    elif trend_dir < 0:  # 空头 - 需要更极端的RSI
+        if rsi <= 25: score += 20
+        elif rsi <= 30: score += 15
+        elif rsi <= 35: score += 10
+        elif rsi <= 40: score += 5
 
     # 成交量分 (20分)
     if vol_ratio >= 2.0: score += 20
@@ -72,11 +76,19 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
     elif volatility >= 0.001: score += 10
     elif volatility >= 0.0008: score += 5
 
-    # 突破分 (20分)
-    if trend_dir > 0 and breakout_long: score += 20
-    elif trend_dir < 0 and breakout_short: score += 20
-    elif trend_dir > 0 and close > high20 * 0.998 if high20 else False: score += 10  # 接近突破
-    elif trend_dir < 0 and close < low20 * 1.002 if low20 else False: score += 10
+    # 突破分 (20分) - 多头给更多分
+    if trend_dir > 0 and breakout_long:
+        score += 20
+        score_details.append("突破+20")
+    elif trend_dir < 0 and breakout_short:
+        score += 15
+        score_details.append("突破+15")
+    elif trend_dir > 0 and high20 and close > high20 * 0.998:
+        score += 10
+        score_details.append("接近突破+10")
+    elif trend_dir < 0 and low20 and close < low20 * 1.002:
+        score += 8
+        score_details.append("接近突破+8")
 
     # ========== 信号类型判断 ==========
     signal, signal_type = "观望", "none"
@@ -84,30 +96,56 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
     position_size = 0
     reasons = []
 
-    # --- 趋势策略 ---
+    # --- 趋势策略 (过滤<60分) ---
     if score >= 80:  # 强信号
         if trend_dir > 0:
             signal = "强做多"
             signal_type = "strong"
             stop_loss = close - 1.8 * atr
             take_profit = close + 3.0 * atr
-            position_size = 50
-            reasons = ["强信号", f"评分{score}"]
+            position_size = 60
+            reasons = ["强信号", f"评分{score}", "突破确认"]
         elif trend_dir < 0:
-            signal = "强做空"
-            signal_type = "strong"
-            stop_loss = close + 1.8 * atr
-            take_profit = close - 3.0 * atr
-            position_size = 50
-            reasons = ["强信号", f"评分{score}"]
+            # 强做空需要额外条件
+            if breakout_short and vol_ratio >= 1.5:
+                signal = "强做空"
+                signal_type = "strong"
+                stop_loss = close + 2.0 * atr
+                take_profit = close - 2.5 * atr
+                position_size = 30
+                reasons = ["强做空", f"评分{score}", "突破+放量"]
+            else:
+                # 不满足强做空条件，降级
+                signal = "中做空"
+                signal_type = "medium"
+                stop_loss = close + 1.8 * atr
+                take_profit = close - 2.0 * atr
+                position_size = 25
+                reasons = ["中做空", f"评分{score}"]
 
-    elif score >= 60:  # 中等信号
+    elif score >= 70:  # 中强信号 - 最佳区间
+        if trend_dir > 0:
+            signal = "中做多"
+            signal_type = "medium"
+            stop_loss = close - 1.5 * atr
+            take_profit = close + 2.5 * atr
+            position_size = 80  # ★ 增加仓位
+            reasons = ["中强信号", f"评分{score}", "最佳区间"]
+        elif trend_dir < 0:
+            signal = "中做空"
+            signal_type = "medium"
+            stop_loss = close + 1.8 * atr
+            take_profit = close - 2.0 * atr
+            position_size = 40
+            reasons = ["中做空", f"评分{score}"]
+
+    elif score >= 60:  # 中等信号 - 次佳区间
         if trend_dir > 0:
             signal = "中做多"
             signal_type = "medium"
             stop_loss = close - 1.5 * atr
             take_profit = close + 2.0 * atr
-            position_size = 30
+            position_size = 70  # ★ 增加仓位
             reasons = ["中信号", f"评分{score}"]
         elif trend_dir < 0:
             signal = "中做空"
@@ -115,54 +153,38 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
             stop_loss = close + 1.5 * atr
             take_profit = close - 2.0 * atr
             position_size = 30
-            reasons = ["中信号", f"评分{score}"]
+            reasons = ["中做空", f"评分{score}"]
 
-    elif score >= 50:  # 弱信号
-        if trend_dir > 0:
-            signal = "弱做多"
-            signal_type = "weak"
-            stop_loss = close - 1.5 * atr
-            take_profit = close + 2.0 * atr
-            position_size = 10
-            reasons = ["弱信号", f"评分{score}"]
-        elif trend_dir < 0:
-            signal = "弱做空"
-            signal_type = "weak"
-            stop_loss = close + 1.5 * atr
-            take_profit = close - 2.0 * atr
-            position_size = 10
-            reasons = ["弱信号", f"评分{score}"]
+    # ★ 过滤50-59分弱信号
 
-    # --- 震荡策略 (独立判断) ---
-    if signal == "观望" and volatility <= 0.001:  # 低波动震荡
-        if rsi <= 35:  # 超卖反转
+    # --- 改进震荡策略 ---
+    if signal == "观望" and volatility <= 0.0012:
+        # 多头震荡：RSI超卖 + 接近支撑
+        if rsi <= 30 and (low20 is None or close <= low20 * 1.01):
             signal = "震荡多"
             signal_type = "range"
-            stop_loss = close - 1.0 * atr
-            take_profit = close + 1.5 * atr
-            position_size = 15
-            reasons = ["震荡超卖", f"RSI={rsi:.0f}"]
-        elif rsi >= 65:  # 超买反转
+            stop_loss = close - 0.8 * atr
+            take_profit = close + 1.2 * atr
+            position_size = 20
+            reasons = ["震荡超卖", f"RSI={rsi:.0f}", "接近支撑"]
+        # 空头震荡：RSI超买 + 接近阻力
+        elif rsi >= 70 and (high20 is None or close >= high20 * 0.99):
             signal = "震荡空"
             signal_type = "range"
-            stop_loss = close + 1.0 * atr
-            take_profit = close - 1.5 * atr
+            stop_loss = close + 0.8 * atr
+            take_profit = close - 1.2 * atr
             position_size = 15
-            reasons = ["震荡超买", f"RSI={rsi:.0f}"]
+            reasons = ["震荡超买", f"RSI={rsi:.0f}", "接近阻力"]
 
     # ========== 动态仓位调整 ==========
     if signal != "观望":
-        # 根据概率调整仓位
         if score >= 80: position_size = min(position_size, 70)
-        elif score >= 70: position_size = min(position_size, 50)
-        elif score >= 60: position_size = min(position_size, 30)
-        elif score >= 50: position_size = min(position_size, 10)
-
-        # 低波动减仓
+        elif score >= 70: position_size = min(position_size, 80)
+        elif score >= 60: position_size = min(position_size, 70)
         if volatility < 0.001:
-            position_size = int(position_size * 0.5)
+            position_size = int(position_size * 0.7)
     else:
-        reasons = [f"评分{score}<50"]
+        reasons = [f"评分{score}<60"]
         if volatility < 0.001: reasons.append("低波动")
         if vol_ratio < 1.0: reasons.append(f"缩量{vol_ratio:.1f}x")
         if not breakout_long and trend_dir > 0: reasons.append("未突破")
@@ -179,7 +201,7 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
         "vol_ratio": vol_ratio,
         "breakout_long": breakout_long,
         "breakout_short": breakout_short,
-        "breakout_prob": score,  # 评分即概率
+        "breakout_prob": score,
         "position_size": position_size,
         "position_reason": f"评分{score}→{position_size}%仓",
         "reasons": reasons,
