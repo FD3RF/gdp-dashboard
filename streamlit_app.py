@@ -442,7 +442,7 @@ with tab1:
     
     fig.update_layout(template="plotly_dark", height=500, xaxis_rangeslider_visible=False, showlegend=False,
                       margin=dict(l=10, r=10, t=10, b=10))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 with tab2:
     c1, c2, c3, c4, c5, c6 = st.columns(6)
@@ -456,7 +456,7 @@ with tab2:
 with tab3:
     records = bt.get("records", [])
     if records:
-        st.dataframe(pd.DataFrame(records), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(records), width='stretch', hide_index=True)
     else:
         st.info("暂无交易记录")
 
