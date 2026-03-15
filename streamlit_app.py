@@ -7,9 +7,9 @@ from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
 
 # 自动刷新
-st_autorefresh(interval=10000, key="refresh_v9_3")
+st_autorefresh(interval=10000, key="refresh_v9_6")
 
-st.set_page_config(page_title="ETH 5分钟量化交易系统 v9.3", layout="wide")
+st.set_page_config(page_title="ETH 5分钟量化交易系统 v9.6", layout="wide")
 
 # ==================== 核心信号函数 ====================
 def get_eth_signal(kline, atr, avg_volume, params=None):
@@ -95,20 +95,20 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
             stop_loss = close - params["stop_loss_mult"] * atr
             take_profit = close + params["take_profit_mult"] * atr
             reasons.append("放量趋势")
-        # 弱做多: 突破但缩量
-        elif rsi_ok_long and vol_filter_ok_long and breakout_long:
+        # 弱做多: 突破但缩量 (需成交量≥0.8x)
+        elif rsi_ok_long and vol_filter_ok_long and breakout_long and vol_ratio >= 0.8:
             signal = "弱做多"
             confidence = 0.8
             stop_loss = close - params["stop_loss_mult"] * atr
             take_profit = close + params["take_profit_mult"] * atr
             reasons.append("突破缩量")
-        # 弱做多: 无突破缩量
-        elif rsi_ok_long and vol_ok:
+        # 弱做多: 无突破放量 (需成交量≥0.8x)
+        elif rsi_ok_long and vol_ok and vol_ratio >= 0.8:
             signal = "弱做多"
             confidence = 0.6
             stop_loss = close - params["stop_loss_mult"] * atr
             take_profit = close + params["take_profit_mult"] * atr
-            reasons.append("缩量")
+            reasons.append("缩量趋势")
         else:
             if not rsi_ok_long:
                 reasons.append(f"RSI={rsi:.0f}<55")
@@ -135,20 +135,20 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
             stop_loss = close + params["stop_loss_mult"] * atr
             take_profit = close - params["take_profit_mult"] * atr
             reasons.append("放量趋势")
-        # 弱做空: 突破但缩量
-        elif rsi_ok_short and vol_filter_ok_short and breakout_short:
+        # 弱做空: 突破但缩量 (需成交量≥0.8x)
+        elif rsi_ok_short and vol_filter_ok_short and breakout_short and vol_ratio >= 0.8:
             signal = "弱做空"
             confidence = 0.8
             stop_loss = close + params["stop_loss_mult"] * atr
             take_profit = close - params["take_profit_mult"] * atr
             reasons.append("突破缩量")
-        # 弱做空: 无突破缩量
-        elif rsi_ok_short and vol_ok:
+        # 弱做空: 无突破放量 (需成交量≥0.8x)
+        elif rsi_ok_short and vol_ok and vol_ratio >= 0.8:
             signal = "弱做空"
             confidence = 0.6
             stop_loss = close + params["stop_loss_mult"] * atr
             take_profit = close - params["take_profit_mult"] * atr
-            reasons.append("缩量")
+            reasons.append("缩量趋势")
         else:
             if not rsi_ok_short:
                 reasons.append(f"RSI={rsi:.0f}>45")
@@ -346,6 +346,13 @@ df["atr"] = tr.rolling(14).mean()
 df["high20"] = df["high"].rolling(20).max()
 df["low20"] = df["low"].rolling(20).min()
 
+# ★ 突破计算 (用于图表标记)
+lookback = 15
+df["recent_high"] = df["high"].rolling(lookback).max()
+df["recent_low"] = df["low"].rolling(lookback).min()
+df["breakout_up"] = df["close"] > df["recent_high"].shift(1)
+df["breakout_down"] = df["close"] < df["recent_low"].shift(1)
+
 # ==================== 应用信号函数 ====================
 params = {
     "rsi_long": 55,
@@ -390,6 +397,10 @@ df["trend"] = trends
 df["sl"] = sls
 df["tp"] = tps
 df["confidence"] = confs
+
+# ★ 信号标记 (用于图表三角)
+df["long_signal"] = df["signal"].isin(["强做多", "弱做多"])
+df["short_signal"] = df["signal"].isin(["强做空", "弱做空"])
 
 # ==================== 回测 ====================
 def backtest(df, lookback=100, max_bars=30):
@@ -456,7 +467,7 @@ last_breakout_prob = breakout_probs[-2]
 last_position_size = position_sizes[-2]
 last_position_reason = position_reasons[-2]
 
-st.title("📊 ETH 5分钟量化交易系统 v9.5")
+st.title("📊 ETH 5分钟量化交易系统 v9.6")
 st.markdown(f"**{data_source}** | **${last['close']:.2f}** | **{last['time'].strftime('%Y-%m-%d %H:%M')}**")
 
 # 指标
@@ -547,25 +558,62 @@ cols[5].metric("突破低", "✓" if last["close"] < last["low20"] else "✗")
 # K线图
 st.subheader("📈 价格走势")
 fig = go.Figure()
-fig.add_trace(go.Candlestick(x=df["time"], open=df["open"], high=df["high"], low=df["low"], close=df["close"],
-                              increasing_line_color='#26a69a', decreasing_line_color='#ef5350'))
-fig.add_trace(go.Scatter(x=df["time"], y=df["ema50"], line=dict(color='orange',width=1), name="EMA50"))
-fig.add_trace(go.Scatter(x=df["time"], y=df["ema200"], line=dict(color='blue',width=2), name="EMA200"))
+
+# K线
+fig.add_trace(go.Candlestick(
+    x=df["time"], open=df["open"], high=df["high"], low=df["low"], close=df["close"],
+    increasing_line_color='#26a69a', decreasing_line_color='#ef5350', name="ETH"
+))
+
+# 均线
+fig.add_trace(go.Scatter(x=df["time"], y=df["ema50"], line=dict(color='orange', width=1.5), name="EMA50"))
+fig.add_trace(go.Scatter(x=df["time"], y=df["ema200"], line=dict(color='blue', width=2), name="EMA200"))
+
+# 阻力支撑
 fig.add_hline(y=last["high20"], line_dash="dash", line_color="red", opacity=0.5, annotation_text="阻力")
 fig.add_hline(y=last["low20"], line_dash="dash", line_color="green", opacity=0.5, annotation_text="支撑")
 
-if sig in ["强做多", "弱做多", "强做空", "弱做空"]:
-    fig.add_hline(y=last["sl"], line_color="red", line_width=2, annotation_text="止损")
-    fig.add_hline(y=last["tp"], line_color="green", line_width=2, annotation_text="止盈")
+# 止损止盈线 (当前信号)
+if sig in ["强做多", "弱做多", "强做空", "弱做空"] and last["sl"] > 0:
+    fig.add_hline(y=last["sl"], line_dash="dash", line_color="red", line_width=2, annotation_text="SL")
+    fig.add_hline(y=last["tp"], line_dash="dash", line_color="green", line_width=2, annotation_text="TP")
 
-for s, color, sz in [("强做多","green",14),("强做空","red",14),("弱做多","lightgreen",8),("弱做空","lightcoral",8)]:
-    mask = df["signal"]==s
-    if mask.any():
-        sym = "triangle-up" if "多" in s else "triangle-down"
-        fig.add_trace(go.Scatter(x=df["time"][mask], y=df["close"][mask], mode="markers",
-                                 marker=dict(symbol=sym,size=sz,color=color), name=s))
+# ★ 多头三角 ▲ (在K线下方)
+long_df = df[df["long_signal"]]
+if len(long_df) > 0:
+    fig.add_trace(go.Scatter(
+        x=long_df["time"], y=long_df["low"] * 0.997, mode="markers",
+        marker=dict(symbol="triangle-up", size=12, color="lime"), name="Long"
+    ))
 
-fig.update_layout(xaxis_rangeslider_visible=False, height=400, showlegend=False)
+# ★ 空头三角 ▼ (在K线上方)
+short_df = df[df["short_signal"]]
+if len(short_df) > 0:
+    fig.add_trace(go.Scatter(
+        x=short_df["time"], y=short_df["high"] * 1.003, mode="markers",
+        marker=dict(symbol="triangle-down", size=12, color="red"), name="Short"
+    ))
+
+# ★ 突破标记 ◆
+break_df = df[df["breakout_up"]]
+if len(break_df) > 0:
+    fig.add_trace(go.Scatter(
+        x=break_df["time"], y=break_df["high"], mode="markers",
+        marker=dict(symbol="diamond", size=8, color="yellow", opacity=0.7), name="Break"
+    ))
+
+# 图表美化
+fig.update_layout(
+    template="plotly_dark",
+    height=500,
+    xaxis_rangeslider_visible=False,
+    margin=dict(l=10, r=10, t=20, b=20),
+    showlegend=True,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+)
+fig.update_yaxes(gridcolor="rgba(255,255,255,0.05)")
+fig.update_xaxes(showgrid=False)
+
 st.plotly_chart(fig, use_container_width=True)
 
 # 成交量
