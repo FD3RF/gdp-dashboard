@@ -409,10 +409,12 @@ def backtest(df, lookback=100, max_bars=30):
     
     if len(trades) == 0:
         return {"total": 0, "wins": 0, "losses": 0, "win_rate": 0, 
-                "freq": 0, "avg_win": 0, "avg_loss": 0, "expectancy": 0}
+                "freq": 0, "avg_win": 0, "avg_loss": 0, "expectancy": 0,
+                "trade_records": []}
     
     wins, losses = 0, 0
     win_pnls, loss_pnls = [], []
+    trade_records = []  # ★ 新增：交易记录
     
     for idx, row in trades.iterrows():
         pos = df.index.get_loc(idx)
@@ -420,26 +422,72 @@ def backtest(df, lookback=100, max_bars=30):
             continue
         
         entry, sl, tp = row["close"], row["sl"], row["tp"]
+        signal_type = row["signal"]
+        trade_time = row["time"]
         
         if "多" in row["signal"]:
             for j in range(pos + 1, min(pos + max_bars + 1, len(df))):
                 if df.iloc[j]["low"] <= sl:
-                    loss_pnls.append((sl - entry) / entry * 100)
+                    pnl = (sl - entry) / entry * 100
+                    loss_pnls.append(pnl)
                     losses += 1
+                    # ★ 记录交易
+                    trade_records.append({
+                        "时间": trade_time.strftime("%Y-%m-%d %H:%M"),
+                        "信号": signal_type,
+                        "方向": "做多",
+                        "入场价": entry,
+                        "出场价": sl,
+                        "盈亏%": round(pnl, 2),
+                        "结果": "❌ 亏损"
+                    })
                     break
                 if df.iloc[j]["high"] >= tp:
-                    win_pnls.append((tp - entry) / entry * 100)
+                    pnl = (tp - entry) / entry * 100
+                    win_pnls.append(pnl)
                     wins += 1
+                    # ★ 记录交易
+                    trade_records.append({
+                        "时间": trade_time.strftime("%Y-%m-%d %H:%M"),
+                        "信号": signal_type,
+                        "方向": "做多",
+                        "入场价": entry,
+                        "出场价": tp,
+                        "盈亏%": round(pnl, 2),
+                        "结果": "✅ 盈利"
+                    })
                     break
         else:
             for j in range(pos + 1, min(pos + max_bars + 1, len(df))):
                 if df.iloc[j]["high"] >= sl:
-                    loss_pnls.append((entry - sl) / entry * 100)
+                    pnl = (entry - sl) / entry * 100
+                    loss_pnls.append(pnl)
                     losses += 1
+                    # ★ 记录交易
+                    trade_records.append({
+                        "时间": trade_time.strftime("%Y-%m-%d %H:%M"),
+                        "信号": signal_type,
+                        "方向": "做空",
+                        "入场价": entry,
+                        "出场价": sl,
+                        "盈亏%": round(pnl, 2),
+                        "结果": "❌ 亏损"
+                    })
                     break
                 if df.iloc[j]["low"] <= tp:
-                    win_pnls.append((entry - tp) / entry * 100)
+                    pnl = (entry - tp) / entry * 100
+                    win_pnls.append(pnl)
                     wins += 1
+                    # ★ 记录交易
+                    trade_records.append({
+                        "时间": trade_time.strftime("%Y-%m-%d %H:%M"),
+                        "信号": signal_type,
+                        "方向": "做空",
+                        "入场价": entry,
+                        "出场价": tp,
+                        "盈亏%": round(pnl, 2),
+                        "结果": "✅ 盈利"
+                    })
                     break
     
     total = wins + losses
@@ -451,7 +499,8 @@ def backtest(df, lookback=100, max_bars=30):
     return {
         "total": len(trades), "freq": len(trades) / lookback * 100,
         "wins": wins, "losses": losses, "win_rate": win_rate,
-        "avg_win": avg_win, "avg_loss": avg_loss, "expectancy": expectancy
+        "avg_win": avg_win, "avg_loss": avg_loss, "expectancy": expectancy,
+        "trade_records": trade_records  # ★ 返回交易记录
     }
 
 bt = backtest(df, 100, 30)
@@ -641,6 +690,100 @@ c3.metric("胜率", f"{bt['win_rate']:.1f}%")
 c4.metric("平均盈利", f"{bt['avg_win']:.2f}%")
 c5.metric("平均亏损", f"{bt['avg_loss']:.2f}%")
 c6.metric("期望值", f"{bt['expectancy']:.3f}%")
+
+# ==================== 交易计划表 ====================
+st.subheader("📋 交易计划表")
+
+# 当前交易计划
+if sig in ["强做多", "弱做多", "强做空", "弱做空"]:
+    # 计算盈亏比
+    if "多" in sig:
+        risk = last["close"] - last["sl"]
+        reward = last["tp"] - last["close"]
+    else:
+        risk = last["sl"] - last["close"]
+        reward = last["close"] - last["tp"]
+    rr_ratio = reward / risk if risk > 0 else 0
+    
+    plan_data = {
+        "信号类型": sig,
+        "入场价": f"${last['close']:.2f}",
+        "止损价": f"${last['sl']:.2f}",
+        "止盈价": f"${last['tp']:.2f}",
+        "止损幅度": f"{abs(risk/last['close']*100):.2f}%",
+        "止盈幅度": f"{abs(reward/last['close']*100):.2f}%",
+        "盈亏比": f"1:{rr_ratio:.1f}",
+        "建议仓位": f"{last_position_size:.0f}%",
+        "突破概率": f"{last_breakout_prob:.0f}%",
+        "状态": "⏳ 待执行"
+    }
+    
+    # 根据信号类型设置颜色
+    if "强做" in sig:
+        st.success("🟢 **当前交易计划**")
+    else:
+        st.info("🟡 **当前交易计划**")
+    
+    plan_df = pd.DataFrame([plan_data])
+    st.dataframe(plan_df, use_container_width=True, hide_index=True)
+    
+    # 风险提示
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("最大亏损", f"-{abs(risk):.2f}", f"-${abs(risk*last_position_size/100):.2f}")
+    with col2:
+        st.metric("最大盈利", f"+{abs(reward):.2f}", f"+${abs(reward*last_position_size/100):.2f}")
+    with col3:
+        st.metric("盈亏比", f"1:{rr_ratio:.1f}")
+else:
+    st.warning("⚪ 当前无交易计划")
+    st.info(f"**原因:** {', '.join(last_reasons) if last_reasons else '条件不满足'}")
+
+# ==================== 交易记录表 ====================
+st.subheader("📝 交易记录表")
+
+# 获取交易记录
+trade_records = bt.get("trade_records", [])
+
+if len(trade_records) > 0:
+    # 统计
+    wins = sum(1 for t in trade_records if "盈利" in t["结果"])
+    losses = sum(1 for t in trade_records if "亏损" in t["结果"])
+    total_pnl = sum(t["盈亏%"] for t in trade_records)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("总交易", f"{len(trade_records)}笔")
+    col2.metric("胜/负", f"{wins}/{losses}")
+    col3.metric("胜率", f"{wins/len(trade_records)*100:.1f}%")
+    col4.metric("累计盈亏", f"{total_pnl:.2f}%")
+    
+    # 显示交易记录表格
+    records_df = pd.DataFrame(trade_records)
+    
+    # 按时间倒序
+    records_df = records_df.sort_values("时间", ascending=False).head(20)
+    
+    st.dataframe(
+        records_df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "入场价": st.column_config.NumberColumn(format="%.2f"),
+            "出场价": st.column_config.NumberColumn(format="%.2f"),
+            "盈亏%": st.column_config.NumberColumn(format="%.2f%%"),
+        }
+    )
+    
+    # 下载按钮
+    csv = pd.DataFrame(trade_records).to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 下载交易记录 (CSV)",
+        data=csv,
+        file_name=f"trade_records_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv"
+    )
+else:
+    st.info("暂无交易记录")
 
 # 参数
 st.sidebar.header("📖 固定参数")
