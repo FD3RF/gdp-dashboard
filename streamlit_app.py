@@ -510,33 +510,126 @@ with col3:
 
 st.divider()
 
-# 核心指标
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric("趋势", last["trend"], delta="多头" if last["trend"]=="多头" else "空头")
-c2.metric("RSI", f"{last['rsi']:.0f}", delta="✓" if 45 <= last['rsi'] <= 55 else "⚠")
-c3.metric("波动率", f"{last_volatility*100:.2f}%", delta="✓" if last_volatility >= 0.0015 else "低")
-c4.metric("成交量", f"{last_vol:.1f}x", delta="✓" if last_vol >= 1.5 else "缩量")
-c5.metric("AI评分", f"{last_prob}", delta="强" if last_prob >= 80 else "中" if last_prob >= 60 else "弱")
-c6.metric("建议仓位", f"{last_pos}%")
+# ===== 多空倾向判断 =====
+def get_bias(trend_dir, rsi, score):
+    """计算多空倾向"""
+    bias_score = 50  # 中性
+    if trend_dir > 0: bias_score += 20
+    elif trend_dir < 0: bias_score -= 20
+    if rsi > 70: bias_score -= 15
+    elif rsi > 55: bias_score -= 5
+    elif rsi < 30: bias_score += 15
+    elif rsi < 45: bias_score += 5
+    bias_score += (score - 50) * 0.3
+    bias_score = max(0, min(100, bias_score))
+    
+    if bias_score >= 65: return "偏多", "🟢", bias_score
+    elif bias_score >= 55: return "略偏多", "🟡", bias_score
+    elif bias_score >= 45: return "中性", "⚪", bias_score
+    elif bias_score >= 35: return "略偏空", "🟠", bias_score
+    else: return "偏空", "🔴", bias_score
 
-# 信号显示 (v10更新)
+trend_dir = 1 if last["trend"] == "多头" else -1 if last["trend"] == "空头" else 0
+bias_text, bias_icon, bias_score = get_bias(trend_dir, last['rsi'], last_prob)
+
+# 核心指标 (v10.4 更新)
+c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+c1.metric("趋势", last["trend"], delta="多头↑" if last["trend"]=="多头" else "空头↓")
+c2.metric("RSI", f"{last['rsi']:.0f}", delta="超买" if last['rsi'] > 70 else "超卖" if last['rsi'] < 30 else "中性")
+c3.metric("波动率", f"{last_volatility*100:.2f}%", delta="高" if last_volatility >= 0.002 else "低" if last_volatility < 0.001 else "")
+c4.metric("成交量", f"{last_vol:.1f}x", delta="放量" if last_vol >= 1.5 else "缩量")
+c5.metric("AI评分", f"{last_prob}", delta="强" if last_prob >= 70 else "中" if last_prob >= 50 else "弱")
+c6.metric("建议仓位", f"{last_pos}%")
+c7.metric("多空倾向", f"{bias_icon} {bias_text}")
+
+# ===== 信号显示 (v10.4 多空明确化) =====
 st.divider()
-trade_signals = ["强做多", "强做空", "中做多", "中做空", "弱做多", "弱做空", "震荡多", "震荡空"]
-if sig == "强做多":
-    st.success(f"### 🟢 {sig} | AI评分 {last_prob} | 仓位 {last_pos}%")
-elif sig == "强做空":
-    st.error(f"### 🔴 {sig} | AI评分 {last_prob} | 仓位 {last_pos}%")
-elif sig in ["中做多", "中做空"]:
-    st.info(f"### 🔵 {sig} | AI评分 {last_prob} | 仓位 {last_pos}%")
-elif sig in ["弱做多", "弱做空"]:
-    st.warning(f"### 🟡 {sig} | AI评分 {last_prob} | 仓位 {last_pos}%")
-elif sig in ["震荡多", "震荡空"]:
-    st.info(f"### 🔄 {sig} | 震荡策略 | 仓位 {last_pos}%")
+
+# 信号分类
+long_signals = ["强做多", "中做多", "弱做多", "震荡多"]
+short_signals = ["强做空", "中做空", "弱做空", "震荡空"]
+trade_signals = long_signals + short_signals
+
+# RSI提示
+rsi_hint = ""
+if last['rsi'] >= 70:
+    rsi_hint = " | RSI超买，考虑做空"
+elif last['rsi'] <= 30:
+    rsi_hint = " | RSI超卖，考虑做多"
+
+# 信号显示
+if sig in long_signals:
+    signal_color = "success"
+    signal_icon = "🟢 做多信号"
+elif sig in short_signals:
+    signal_color = "error"
+    signal_icon = "🔴 做空信号"
 else:
-    st.warning(f"### ⚪ {sig} | AI评分 {last_prob}")
+    signal_color = "warning"
+    signal_icon = "⚪ 观望"
+
+# 显示信号
+if sig == "强做多":
+    st.success(f"### 🟢 强做多信号 | AI评分 {last_prob} | 仓位 {last_pos}%{rsi_hint}")
+elif sig == "强做空":
+    st.error(f"### 🔴 强做空信号 | AI评分 {last_prob} | 仓位 {last_pos}%{rsi_hint}")
+elif sig in ["中做多", "弱做多", "震荡多"]:
+    st.info(f"### 🟢 做多信号: {sig} | AI评分 {last_prob} | 仓位 {last_pos}%{rsi_hint}")
+elif sig in ["中做空", "弱做空", "震荡空"]:
+    st.warning(f"### 🔴 做空信号: {sig} | AI评分 {last_prob} | 仓位 {last_pos}%{rsi_hint}")
+else:
+    st.warning(f"### ⚪ 观望 | AI评分 {last_prob} | {bias_icon} {bias_text}")
+
+# ===== 结论区：明确操作建议 =====
+st.divider()
+st.markdown("#### 📋 操作建议")
+
+# 多空操作建议
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown("**🟢 做多条件**")
+    long_conditions = []
+    if last["trend"] == "多头": long_conditions.append("✅ 趋势多头")
+    else: long_conditions.append("❌ 趋势非多头")
+    if last['rsi'] <= 40: long_conditions.append("✅ RSI超卖")
+    elif last['rsi'] < 55: long_conditions.append("⚠️ RSI中性")
+    else: long_conditions.append("❌ RSI偏高")
+    if last_vol >= 1.0: long_conditions.append("✅ 成交量充足")
+    else: long_conditions.append("❌ 缩量")
+    for c in long_conditions:
+        st.markdown(f"- {c}")
+
+with col2:
+    st.markdown("**🔴 做空条件**")
+    short_conditions = []
+    if last["trend"] == "空头": short_conditions.append("✅ 趋势空头")
+    else: short_conditions.append("❌ 趋势非空头")
+    if last['rsi'] >= 60: short_conditions.append("✅ RSI偏高")
+    elif last['rsi'] > 45: short_conditions.append("⚠️ RSI中性")
+    else: short_conditions.append("❌ RSI偏低")
+    if last_vol >= 1.0: short_conditions.append("✅ 成交量充足")
+    else: short_conditions.append("❌ 缩量")
+    for c in short_conditions:
+        st.markdown(f"- {c}")
+
+# 最终建议
+st.markdown("---")
+if sig in long_signals and last_pos > 0:
+    st.success(f"**💡 建议: 做多进场** | 入场 ${last['close']:.2f} | 止损 ${last['sl']:.2f} | 止盈 ${last['tp']:.2f}")
+elif sig in short_signals and last_pos > 0:
+    st.error(f"**💡 建议: 做空进场** | 入场 ${last['close']:.2f} | 止损 ${last['sl']:.2f} | 止盈 ${last['tp']:.2f}")
+elif bias_score >= 55:
+    st.info(f"**💡 建议: 偏多观望** | 等待做多信号确认")
+elif bias_score <= 45:
+    st.warning(f"**💡 建议: 偏空观望** | 等待做空信号确认")
+else:
+    st.warning(f"**💡 建议: 中性观望** | 等待明确信号")
 
 # 交易计划
-if sig in trade_signals:
+if sig in trade_signals and last["sl"] > 0:
+    st.divider()
+    st.markdown("#### 📊 交易计划")
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("入场价", f"${last['close']:.2f}")
     col2.metric("止损", f"${last['sl']:.2f}")
@@ -544,8 +637,6 @@ if sig in trade_signals:
     risk = abs(last['close'] - last['sl'])
     reward = abs(last['tp'] - last['close'])
     col4.metric("盈亏比", f"1:{reward/risk:.1f}" if risk > 0 else "N/A")
-else:
-    st.info(f"**原因:** {', '.join(last_reasons)}")
 
 st.divider()
 
@@ -662,10 +753,41 @@ with tab1:
     st.caption(f"📊 信号统计: 抄底{buy_dip.sum()}次 | 逃顶{escape_top.sum()}次 | 支撑反弹{support_bounce.sum()}次 | 阻力回落{resist_fall.sum()}次 | 回调买点{pullback_long.sum()}次")
 
 with tab2:
+    # 总体统计
+    st.markdown("#### 📊 总体统计")
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("交易次数", bt["total"])
     c2.metric("胜/负", f"{bt['wins']}/{bt['losses']}")
     c3.metric("胜率", f"{bt['win_rate']:.1f}%")
+    c4.metric("平均盈利", f"{bt['avg_win']:.2f}%")
+    c5.metric("平均亏损", f"{bt['avg_loss']:.2f}%")
+    c6.metric("期望值", f"{bt['expectancy']:.3f}%")
+    
+    # 多空分类统计
+    st.markdown("#### 🔄 多空分类统计")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("**🟢 做多信号**")
+        long_trades = [r for r in bt.get("records", []) if "多" in r.get("信号", "")]
+        long_wins = sum(1 for r in long_trades if r.get("结果") == "✅")
+        long_losses = sum(1 for r in long_trades if r.get("结果") == "❌")
+        long_pnl = sum(r.get("盈亏%", 0) for r in long_trades)
+        long_total = len(long_trades)
+        long_rate = long_wins / long_total * 100 if long_total > 0 else 0
+        st.metric("做多胜率", f"{long_rate:.1f}%", f"{long_wins}胜/{long_losses}负")
+        st.metric("做多盈亏", f"{long_pnl:.2f}%")
+    
+    with col2:
+        st.markdown("**🔴 做空信号**")
+        short_trades = [r for r in bt.get("records", []) if "空" in r.get("信号", "")]
+        short_wins = sum(1 for r in short_trades if r.get("结果") == "✅")
+        short_losses = sum(1 for r in short_trades if r.get("结果") == "❌")
+        short_pnl = sum(r.get("盈亏%", 0) for r in short_trades)
+        short_total = len(short_trades)
+        short_rate = short_wins / short_total * 100 if short_total > 0 else 0
+        st.metric("做空胜率", f"{short_rate:.1f}%", f"{short_wins}胜/{short_losses}负")
+        st.metric("做空盈亏", f"{short_pnl:.2f}%")
     c4.metric("平均盈利", f"{bt['avg_win']:.2f}%")
     c5.metric("平均亏损", f"{bt['avg_loss']:.2f}%")
     c6.metric("期望值", f"{bt['expectancy']:.3f}%")
