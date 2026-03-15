@@ -166,6 +166,7 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
 def get_data(limit=500):
     """获取K线数据，带重试机制和验证"""
     import time
+    import os
     
     # 尝试Binance (最多3次)
     for attempt in range(3):
@@ -197,22 +198,51 @@ def get_data(limit=500):
             if attempt < 2: time.sleep(1)
             continue
     
-    # 使用本地历史数据作为备用
-    try:
-        import os
-        local_file = "/mount/src/gdp-dashboard/以太坊合约/ETHUSDT_5m_1y_okx.csv"
-        if os.path.exists(local_file):
-            df = pd.read_csv(local_file)
-            if len(df) > 300:
-                df["time"] = pd.to_datetime(df["time"])
-                for col in ["open","high","low","close","volume"]: 
-                    if col in df.columns: df[col] = pd.to_numeric(df[col], errors="coerce")
-                df = df.dropna(subset=["open","high","low","close"]).tail(500).reset_index(drop=True)
-                return df, "本地数据"
-    except:
-        pass
+    # 使用本地历史数据 (尝试多个路径)
+    local_paths = [
+        "以太坊合约/ETHUSDT_5m_1y_okx.csv",
+        "./以太坊合约/ETHUSDT_5m_1y_okx.csv",
+        "/mount/src/gdp-dashboard/以太坊合约/ETHUSDT_5m_1y_okx.csv",
+        "/workspace/gdp-dashboard/以太坊合约/ETHUSDT_5m_1y_okx.csv"
+    ]
     
-    return None, None
+    for path in local_paths:
+        try:
+            if os.path.exists(path):
+                df = pd.read_csv(path)
+                if len(df) > 300:
+                    if "time" in df.columns:
+                        df["time"] = pd.to_datetime(df["time"])
+                    for col in ["open","high","low","close","volume"]: 
+                        if col in df.columns: 
+                            df[col] = pd.to_numeric(df[col], errors="coerce")
+                    df = df.dropna(subset=["open","high","low","close"]).tail(500).reset_index(drop=True)
+                    return df, "本地数据"
+        except:
+            continue
+    
+    # 最后备用：生成模拟数据
+    return generate_mock_data(limit), "模拟数据"
+
+
+def generate_mock_data(limit=500):
+    """生成模拟ETH价格数据"""
+    np.random.seed(42)
+    times = pd.date_range(end=datetime.now(), periods=limit, freq="5min")
+    price = 2100
+    prices = []
+    
+    for i in range(limit):
+        change = np.random.normal(0, 0.002)
+        price = price * (1 + change)
+        high = price * (1 + abs(np.random.normal(0, 0.001)))
+        low = price * (1 - abs(np.random.normal(0, 0.001)))
+        open_p = price * (1 + np.random.normal(0, 0.0005))
+        volume = 1000 * (1 + np.random.normal(0, 0.5))
+        prices.append([times[i], open_p, high, low, price, volume])
+    
+    df = pd.DataFrame(prices, columns=["time", "open", "high", "low", "close", "volume"])
+    return df
 
 # ==================== 指标计算 ====================
 def calc_indicators(df):
@@ -238,23 +268,15 @@ def calc_indicators(df):
 df, data_source = get_data(500)
 
 # 数据验证
-if df is None:
-    st.error("❌ 无法获取数据，请检查网络连接后刷新页面")
-    st.info("💡 提示：API可能暂时不可用，请稍后重试")
+if df is None or len(df) < 50:
+    st.error("❌ 无法获取数据，请刷新页面重试")
     st.stop()
 
-if len(df) < 200:
-    st.error(f"❌ 数据不足：仅获取到 {len(df)} 条记录，需要至少 200 条")
-    st.stop()
-
-# 计算指标
-df = calc_indicators(df)
-df = df.dropna().reset_index(drop=True)
-
-# 最终验证
-if len(df) < 50:
-    st.error(f"❌ 有效数据不足：计算指标后仅剩 {len(df)} 条记录")
-    st.stop()
+# 显示数据源
+if data_source == "模拟数据":
+    st.warning("⚠️ 使用模拟数据（API不可用）")
+elif data_source == "本地数据":
+    st.info("📁 使用本地历史数据")
 params = {"rsi_long": 55, "rsi_short": 45, "volume_mult": 1.5, "volatility_thresh": 0.0015, "stop_loss_mult": 1.8, "take_profit_mult": 2.8}
 
 # 应用信号
