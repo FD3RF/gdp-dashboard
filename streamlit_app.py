@@ -356,6 +356,10 @@ def calc_indicators(df):
     hc = abs(df["high"] - df["close"].shift())
     lc = abs(df["low"] - df["close"].shift())
     df["atr"] = pd.concat([hl, hc, lc], axis=1).max(axis=1).rolling(14).mean()
+    
+    # ★ ATR移动平均 - 用于波动率比率判断
+    df["atr_ma20"] = df["atr"].rolling(20).mean()
+    df["atr_ratio"] = df["atr"] / df["atr_ma20"]
 
     # ===== 成交量 =====
     df["vol_ma"] = df["volume"].rolling(20).mean()
@@ -532,11 +536,25 @@ def get_bias(trend_dir, rsi, score):
 trend_dir = 1 if last["trend"] == "多头" else -1 if last["trend"] == "空头" else 0
 bias_text, bias_icon, bias_score = get_bias(trend_dir, last['rsi'], last_prob)
 
-# 核心指标 (v10.4 更新)
+# ★ 波动率判断（使用ATR比率）
+atr_ratio = last.get("atr_ratio", 1.0) if "atr_ratio" in last else 1.0
+if pd.isna(atr_ratio): atr_ratio = 1.0
+if atr_ratio > 1.3:
+    vol_status = "高"
+elif atr_ratio > 1.1:
+    vol_status = "偏高"
+elif atr_ratio < 0.7:
+    vol_status = "低"
+elif atr_ratio < 0.9:
+    vol_status = "偏低"
+else:
+    vol_status = "正常"
+
+# 核心指标 (v10.5 更新)
 c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
 c1.metric("趋势", last["trend"], delta="多头↑" if last["trend"]=="多头" else "空头↓")
 c2.metric("RSI", f"{last['rsi']:.0f}", delta="超买" if last['rsi'] > 70 else "超卖" if last['rsi'] < 30 else "中性")
-c3.metric("波动率", f"{last_volatility*100:.2f}%", delta="高" if last_volatility >= 0.002 else "低" if last_volatility < 0.001 else "")
+c3.metric("波动率", f"{last_volatility*100:.2f}%", delta=vol_status)
 c4.metric("成交量", f"{last_vol:.1f}x", delta="放量" if last_vol >= 1.5 else "缩量")
 c5.metric("AI评分", f"{last_prob}", delta="强" if last_prob >= 70 else "中" if last_prob >= 50 else "弱")
 c6.metric("建议仓位", f"{last_pos}%")
@@ -584,32 +602,57 @@ else:
 st.divider()
 st.markdown("#### 📋 操作建议")
 
+# 获取ATR比率判断波动率
+atr_ratio = last.get("atr_ratio", 1.0) if "atr_ratio" in last else 1.0
+if atr_ratio > 1.2:
+    vol_status = "高波动"
+elif atr_ratio < 0.8:
+    vol_status = "低波动"
+else:
+    vol_status = "正常"
+
 # 多空操作建议
 col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("**🟢 做多条件**")
     long_conditions = []
+    # 趋势
     if last["trend"] == "多头": long_conditions.append("✅ 趋势多头")
     else: long_conditions.append("❌ 趋势非多头")
-    if last['rsi'] <= 40: long_conditions.append("✅ RSI超卖")
+    # RSI: 超卖(<30)最好，中性(30-50)可接受，偏高(>50)不利
+    if last['rsi'] < 30: long_conditions.append("✅ RSI超卖(买入区)")
+    elif last['rsi'] < 45: long_conditions.append("⚠️ RSI中性偏多")
     elif last['rsi'] < 55: long_conditions.append("⚠️ RSI中性")
-    else: long_conditions.append("❌ RSI偏高")
-    if last_vol >= 1.0: long_conditions.append("✅ 成交量充足")
+    else: long_conditions.append("❌ RSI偏高(不利做多)")
+    # 成交量
+    if last_vol >= 1.5: long_conditions.append("✅ 放量")
+    elif last_vol >= 1.0: long_conditions.append("⚠️ 量能正常")
     else: long_conditions.append("❌ 缩量")
+    # 波动率
+    if atr_ratio >= 1.0: long_conditions.append(f"✅ {vol_status}")
+    else: long_conditions.append(f"⚠️ {vol_status}")
     for c in long_conditions:
         st.markdown(f"- {c}")
 
 with col2:
     st.markdown("**🔴 做空条件**")
     short_conditions = []
+    # 趋势
     if last["trend"] == "空头": short_conditions.append("✅ 趋势空头")
     else: short_conditions.append("❌ 趋势非空头")
-    if last['rsi'] >= 60: short_conditions.append("✅ RSI偏高")
+    # RSI: 超买(>70)最好，中性(50-70)可接受，偏低(<50)不利
+    if last['rsi'] > 70: short_conditions.append("✅ RSI超买(卖出区)")
+    elif last['rsi'] > 55: short_conditions.append("⚠️ RSI中性偏空")
     elif last['rsi'] > 45: short_conditions.append("⚠️ RSI中性")
-    else: short_conditions.append("❌ RSI偏低")
-    if last_vol >= 1.0: short_conditions.append("✅ 成交量充足")
+    else: short_conditions.append("❌ RSI偏低(不利做空)")
+    # 成交量
+    if last_vol >= 1.5: short_conditions.append("✅ 放量")
+    elif last_vol >= 1.0: short_conditions.append("⚠️ 量能正常")
     else: short_conditions.append("❌ 缩量")
+    # 波动率
+    if atr_ratio >= 1.0: short_conditions.append(f"✅ {vol_status}")
+    else: short_conditions.append(f"⚠️ {vol_status}")
     for c in short_conditions:
         st.markdown(f"- {c}")
 
@@ -742,10 +785,16 @@ with tab1:
     ▲ 做多信号 | ▼ 做空信号
     """
     
+    # ★ 动态设置Y轴范围（根据最近50根K线）
+    recent_high = df['high'].tail(50).max()
+    recent_low = df['low'].tail(50).min()
+    padding = (recent_high - recent_low) * 0.05
+    
     fig.update_layout(
         template="plotly_dark", height=550, xaxis_rangeslider_visible=False,
         showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(l=10, r=10, t=30, b=10)
+        margin=dict(l=10, r=10, t=30, b=10),
+        yaxis=dict(range=[recent_low - padding, recent_high + padding])
     )
     st.plotly_chart(fig, width='stretch')
     
