@@ -164,25 +164,54 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
 
 # ==================== 数据获取 ====================
 def get_data(limit=500):
-    try:
-        url = f"https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=5m&limit={limit}"
-        r = requests.get(url, timeout=10)
-        data = r.json()
-        df = pd.DataFrame(data, columns=["open_time","open","high","low","close","volume","close_time","qvol","trades","tb","tq","ignore"])
-        df["time"] = pd.to_datetime(df["open_time"], unit="ms")
-        for col in ["open","high","low","close","volume"]: df[col] = pd.to_numeric(df[col])
-        return df.sort_values("time").reset_index(drop=True), "Binance"
-    except:
+    """获取K线数据，带重试机制和验证"""
+    import time
+    
+    # 尝试Binance (最多3次)
+    for attempt in range(3):
+        try:
+            url = f"https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=5m&limit={limit}"
+            r = requests.get(url, timeout=15)
+            data = r.json()
+            if isinstance(data, list) and len(data) > 300:
+                df = pd.DataFrame(data, columns=["open_time","open","high","low","close","volume","close_time","qvol","trades","tb","tq","ignore"])
+                df["time"] = pd.to_datetime(df["open_time"], unit="ms")
+                for col in ["open","high","low","close","volume"]: df[col] = pd.to_numeric(df[col])
+                return df.sort_values("time").reset_index(drop=True), "Binance"
+        except Exception as e:
+            if attempt < 2: time.sleep(1)
+            continue
+    
+    # 尝试OKX (最多3次)
+    for attempt in range(3):
         try:
             url = f"https://www.okx.com/api/v5/market/candles?instId=ETH-USDT&bar=5m&limit={limit}"
-            r = requests.get(url, timeout=10)
+            r = requests.get(url, timeout=15)
             result = r.json()
-            if result.get("code") == "0" and result.get("data"):
+            if result.get("code") == "0" and result.get("data") and len(result["data"]) > 300:
                 df = pd.DataFrame(result["data"], columns=["time","open","high","low","close","volume","vc","vq","conf"])
                 df["time"] = pd.to_datetime(df["time"])
                 for col in ["open","high","low","close","volume"]: df[col] = pd.to_numeric(df[col])
                 return df.sort_values("time").reset_index(drop=True), "OKX"
-        except: pass
+        except Exception as e:
+            if attempt < 2: time.sleep(1)
+            continue
+    
+    # 使用本地历史数据作为备用
+    try:
+        import os
+        local_file = "/mount/src/gdp-dashboard/以太坊合约/ETHUSDT_5m_1y_okx.csv"
+        if os.path.exists(local_file):
+            df = pd.read_csv(local_file)
+            if len(df) > 300:
+                df["time"] = pd.to_datetime(df["time"])
+                for col in ["open","high","low","close","volume"]: 
+                    if col in df.columns: df[col] = pd.to_numeric(df[col], errors="coerce")
+                df = df.dropna(subset=["open","high","low","close"]).tail(500).reset_index(drop=True)
+                return df, "本地数据"
+    except:
+        pass
+    
     return None, None
 
 # ==================== 指标计算 ====================
@@ -207,15 +236,24 @@ def calc_indicators(df):
 
 # ==================== 获取数据 ====================
 df, data_source = get_data(500)
-if df is None or len(df) < 200:
-    st.error("无法获取足够数据，请稍后重试")
+
+# 数据验证
+if df is None:
+    st.error("❌ 无法获取数据，请检查网络连接后刷新页面")
+    st.info("💡 提示：API可能暂时不可用，请稍后重试")
     st.stop()
 
+if len(df) < 200:
+    st.error(f"❌ 数据不足：仅获取到 {len(df)} 条记录，需要至少 200 条")
+    st.stop()
+
+# 计算指标
 df = calc_indicators(df)
 df = df.dropna().reset_index(drop=True)
 
+# 最终验证
 if len(df) < 50:
-    st.error("数据不足，请稍后重试")
+    st.error(f"❌ 有效数据不足：计算指标后仅剩 {len(df)} 条记录")
     st.stop()
 params = {"rsi_long": 55, "rsi_short": 45, "volume_mult": 1.5, "volatility_thresh": 0.0015, "stop_loss_mult": 1.8, "take_profit_mult": 2.8}
 
@@ -276,14 +314,18 @@ def backtest(df, lookback=100, max_bars=30):
 
 bt = backtest(df, 100, 30)
 
-# 当前状态
-last = df.iloc[-2]
-sig = last["signal"]
-last_vol = vol_ratios[-2]
-last_volatility = vols[-2]
-last_prob = breakout_probs[-2]
-last_pos = position_sizes[-2]
-last_reasons = reasons_list[-2]
+# 当前状态 - 使用最后一根完整K线 (倒数第二行，因为最后一根可能未完成)
+if len(df) >= 2:
+    last = df.iloc[-2]
+    sig = last["signal"]
+    last_vol = vol_ratios[-2] if len(vol_ratios) >= 2 else 1.0
+    last_volatility = vols[-2] if len(vols) >= 2 else 0.001
+    last_prob = breakout_probs[-2] if len(breakout_probs) >= 2 else 0
+    last_pos = position_sizes[-2] if len(position_sizes) >= 2 else 0
+    last_reasons = reasons_list[-2] if len(reasons_list) >= 2 else ["数据不足"]
+else:
+    st.error("❌ 数据不足，无法生成交易信号")
+    st.stop()
 
 # ==================== UI ====================
 st.markdown(f"""
