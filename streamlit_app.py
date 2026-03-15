@@ -207,9 +207,16 @@ def calc_indicators(df):
 
 # ==================== 获取数据 ====================
 df, data_source = get_data(500)
-if df is None: st.error("无法获取数据"); st.stop()
+if df is None or len(df) < 200:
+    st.error("无法获取足够数据，请稍后重试")
+    st.stop()
 
 df = calc_indicators(df)
+df = df.dropna().reset_index(drop=True)
+
+if len(df) < 50:
+    st.error("数据不足，请稍后重试")
+    st.stop()
 params = {"rsi_long": 55, "rsi_short": 45, "volume_mult": 1.5, "volatility_thresh": 0.0015, "stop_loss_mult": 1.8, "take_profit_mult": 2.8}
 
 # 应用信号
