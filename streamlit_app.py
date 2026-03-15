@@ -15,12 +15,11 @@ st_autorefresh(interval=10000, key="refresh_v9_7")
 
 st.set_page_config(page_title="ETH 5分钟量化交易系统", layout="wide", initial_sidebar_state="collapsed")
 
-# ==================== 核心信号函数 ====================
+# ==================== v10 AI评分信号系统 ====================
 def get_eth_signal(kline, atr, avg_volume, params=None):
-    if params is None:
-        params = {"rsi_long": 55, "rsi_short": 45, "volume_mult": 1.5, 
-                  "volatility_thresh": 0.0015, "stop_loss_mult": 1.8, "take_profit_mult": 2.8}
-    
+    """
+    v10版本: AI评分模型 + 两级信号 + 震荡策略 + 动态仓位
+    """
     close = kline["close"]
     ema50 = kline["ema50"]
     ema200 = kline["ema200"]
@@ -28,138 +27,164 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
     volume = kline["volume"]
     high20 = kline.get("high20", None)
     low20 = kline.get("low20", None)
-    
-    # 趋势判断
+
+    # ========== 基础指标 ==========
     trend = "多头" if ema50 > ema200 else "空头" if ema50 < ema200 else "横盘"
     trend_dir = 1 if ema50 > ema200 else -1 if ema50 < ema200 else 0
-    
-    # 突破判断
+    volatility = atr / close if close > 0 else 0
+    vol_ratio = volume / avg_volume if avg_volume > 0 else 0
     breakout_long = high20 is not None and close > high20
     breakout_short = low20 is not None and close < low20
-    
-    # 波动率
-    volatility = atr / close if close > 0 else 0
-    vol_ok = volatility >= params["volatility_thresh"]
-    vol_filter_ok_long = vol_ok or breakout_long
-    vol_filter_ok_short = vol_ok or breakout_short
-    
-    # RSI & 成交量
-    rsi_ok_long = rsi >= params["rsi_long"]
-    rsi_ok_short = rsi <= params["rsi_short"]
-    vol_ratio = volume / avg_volume if avg_volume > 0 else 0
-    volume_ok = vol_ratio >= params["volume_mult"]
-    
-    # 信号计算
-    signal, confidence, stop_loss, take_profit = "观望", 0.0, 0, 0
-    reasons = []
-    
-    if trend_dir > 0:  # 做多
-        if rsi_ok_long and vol_filter_ok_long and breakout_long and volume_ok:
-            signal, confidence = "强做多", 1.0
-            stop_loss = close - params["stop_loss_mult"] * atr
-            take_profit = close + params["take_profit_mult"] * atr
-            reasons.append("突破+")
-        elif rsi_ok_long and vol_ok and volume_ok:
-            signal, confidence = "强做多", 0.9
-            stop_loss = close - params["stop_loss_mult"] * atr
-            take_profit = close + params["take_profit_mult"] * atr
-            reasons.append("放量趋势")
-        elif rsi_ok_long and vol_filter_ok_long and breakout_long and vol_ratio >= 0.8:
-            signal, confidence = "弱做多", 0.8
-            stop_loss = close - params["stop_loss_mult"] * atr
-            take_profit = close + params["take_profit_mult"] * atr
-            reasons.append("突破缩量")
-        elif rsi_ok_long and vol_ok and vol_ratio >= 0.8:
-            signal, confidence = "弱做多", 0.6
-            stop_loss = close - params["stop_loss_mult"] * atr
-            take_profit = close + params["take_profit_mult"] * atr
-            reasons.append("缩量趋势")
-        else:
-            if not rsi_ok_long: reasons.append(f"RSI={rsi:.0f}<55")
-            if not vol_filter_ok_long: reasons.append(f"波动率低")
-            if not volume_ok: reasons.append(f"缩量{vol_ratio:.1f}x")
-            if not breakout_long: reasons.append("未突破")
-    elif trend_dir < 0:  # 做空
-        if rsi_ok_short and vol_filter_ok_short and breakout_short and volume_ok:
-            signal, confidence = "强做空", 1.0
-            stop_loss = close + params["stop_loss_mult"] * atr
-            take_profit = close - params["take_profit_mult"] * atr
-            reasons.append("突破-")
-        elif rsi_ok_short and vol_ok and volume_ok:
-            signal, confidence = "强做空", 0.9
-            stop_loss = close + params["stop_loss_mult"] * atr
-            take_profit = close - params["take_profit_mult"] * atr
-            reasons.append("放量趋势")
-        elif rsi_ok_short and vol_filter_ok_short and breakout_short and vol_ratio >= 0.8:
-            signal, confidence = "弱做空", 0.8
-            stop_loss = close + params["stop_loss_mult"] * atr
-            take_profit = close - params["take_profit_mult"] * atr
-            reasons.append("突破缩量")
-        elif rsi_ok_short and vol_ok and vol_ratio >= 0.8:
-            signal, confidence = "弱做空", 0.6
-            stop_loss = close + params["stop_loss_mult"] * atr
-            take_profit = close - params["take_profit_mult"] * atr
-            reasons.append("缩量趋势")
-        else:
-            if not rsi_ok_short: reasons.append(f"RSI={rsi:.0f}>45")
-            if not vol_filter_ok_short: reasons.append(f"波动率低")
-            if not volume_ok: reasons.append(f"缩量{vol_ratio:.1f}x")
-            if not breakout_short: reasons.append("未突破")
-    else:
-        reasons.append("横盘趋势")
-    
-    # 突破概率
-    breakout_prob = 0
+
+    # ========== AI评分模型 (0-100) ==========
+    score = 0
+    score_details = []
+
+    # 趋势分 (20分)
     if trend_dir > 0:
-        prob = 0
-        if rsi >= 80: prob += 30
-        elif rsi >= 70: prob += 20
-        elif rsi >= 60: prob += 10
-        if vol_ratio >= 3.0: prob += 35
-        elif vol_ratio >= 2.0: prob += 25
-        elif vol_ratio >= 1.5: prob += 15
-        if volatility < 0.001: prob += 35
-        elif volatility < 0.0015: prob += 25
-        elif volatility < 0.002: prob += 15
-        breakout_prob = min(prob, 95)
+        score += 20
+        score_details.append("趋势+20")
     elif trend_dir < 0:
-        prob = 0
-        if rsi <= 20: prob += 30
-        elif rsi <= 30: prob += 20
-        elif rsi <= 40: prob += 10
-        if vol_ratio >= 3.0: prob += 35
-        elif vol_ratio >= 2.0: prob += 25
-        elif vol_ratio >= 1.5: prob += 15
-        if volatility < 0.001: prob += 35
-        elif volatility < 0.0015: prob += 25
-        elif volatility < 0.002: prob += 15
-        breakout_prob = min(prob, 95)
-    
-    # 仓位计算
-    position_size, position_reason = 0, "观望"
-    if signal in ["强做多", "强做空"]:
-        if breakout_prob >= 70: position_size, position_reason = 45, "高概率适度仓45%"
-        elif breakout_prob >= 60: position_size, position_reason = 70, "中高概率70%"
-        elif breakout_prob >= 50: position_size, position_reason = 95, "最佳概率满仓95%"
-        else: position_size, position_reason = 50, "低概率50%"
-    elif signal in ["弱做多", "弱做空"]:
-        if breakout_prob >= 70: position_size, position_reason = 40, "弱高概率40%"
-        elif breakout_prob >= 60: position_size, position_reason = 60, "弱中概率60%"
-        elif breakout_prob >= 50: position_size, position_reason = 80, "弱最佳80%"
-        else: position_size, position_reason = 0, "弱低概率观望"
+        score += 10  # 空头给10分
+        score_details.append("趋势+10")
+
+    # RSI分 (20分)
+    if trend_dir > 0:  # 多头
+        if rsi >= 70: score += 20
+        elif rsi >= 60: score += 15
+        elif rsi >= 55: score += 10
+        elif rsi >= 50: score += 5
+    elif trend_dir < 0:  # 空头
+        if rsi <= 30: score += 20
+        elif rsi <= 40: score += 15
+        elif rsi <= 45: score += 10
+        elif rsi <= 50: score += 5
+
+    # 成交量分 (20分)
+    if vol_ratio >= 2.0: score += 20
+    elif vol_ratio >= 1.5: score += 15
+    elif vol_ratio >= 1.2: score += 10
+    elif vol_ratio >= 1.0: score += 5
+
+    # 波动率分 (20分)
+    if volatility >= 0.002: score += 20
+    elif volatility >= 0.0015: score += 15
+    elif volatility >= 0.001: score += 10
+    elif volatility >= 0.0008: score += 5
+
+    # 突破分 (20分)
+    if trend_dir > 0 and breakout_long: score += 20
+    elif trend_dir < 0 and breakout_short: score += 20
+    elif trend_dir > 0 and close > high20 * 0.998 if high20 else False: score += 10  # 接近突破
+    elif trend_dir < 0 and close < low20 * 1.002 if low20 else False: score += 10
+
+    # ========== 信号类型判断 ==========
+    signal, signal_type = "观望", "none"
+    stop_loss, take_profit = 0, 0
+    position_size = 0
+    reasons = []
+
+    # --- 趋势策略 ---
+    if score >= 80:  # 强信号
+        if trend_dir > 0:
+            signal = "强做多"
+            signal_type = "strong"
+            stop_loss = close - 1.8 * atr
+            take_profit = close + 3.0 * atr
+            position_size = 50
+            reasons = ["强信号", f"评分{score}"]
+        elif trend_dir < 0:
+            signal = "强做空"
+            signal_type = "strong"
+            stop_loss = close + 1.8 * atr
+            take_profit = close - 3.0 * atr
+            position_size = 50
+            reasons = ["强信号", f"评分{score}"]
+
+    elif score >= 60:  # 中等信号
+        if trend_dir > 0:
+            signal = "中做多"
+            signal_type = "medium"
+            stop_loss = close - 1.5 * atr
+            take_profit = close + 2.0 * atr
+            position_size = 30
+            reasons = ["中信号", f"评分{score}"]
+        elif trend_dir < 0:
+            signal = "中做空"
+            signal_type = "medium"
+            stop_loss = close + 1.5 * atr
+            take_profit = close - 2.0 * atr
+            position_size = 30
+            reasons = ["中信号", f"评分{score}"]
+
+    elif score >= 50:  # 弱信号
+        if trend_dir > 0:
+            signal = "弱做多"
+            signal_type = "weak"
+            stop_loss = close - 1.5 * atr
+            take_profit = close + 2.0 * atr
+            position_size = 10
+            reasons = ["弱信号", f"评分{score}"]
+        elif trend_dir < 0:
+            signal = "弱做空"
+            signal_type = "weak"
+            stop_loss = close + 1.5 * atr
+            take_profit = close - 2.0 * atr
+            position_size = 10
+            reasons = ["弱信号", f"评分{score}"]
+
+    # --- 震荡策略 (独立判断) ---
+    if signal == "观望" and volatility <= 0.001:  # 低波动震荡
+        if rsi <= 35:  # 超卖反转
+            signal = "震荡多"
+            signal_type = "range"
+            stop_loss = close - 1.0 * atr
+            take_profit = close + 1.5 * atr
+            position_size = 15
+            reasons = ["震荡超卖", f"RSI={rsi:.0f}"]
+        elif rsi >= 65:  # 超买反转
+            signal = "震荡空"
+            signal_type = "range"
+            stop_loss = close + 1.0 * atr
+            take_profit = close - 1.5 * atr
+            position_size = 15
+            reasons = ["震荡超买", f"RSI={rsi:.0f}"]
+
+    # ========== 动态仓位调整 ==========
+    if signal != "观望":
+        # 根据概率调整仓位
+        if score >= 80: position_size = min(position_size, 70)
+        elif score >= 70: position_size = min(position_size, 50)
+        elif score >= 60: position_size = min(position_size, 30)
+        elif score >= 50: position_size = min(position_size, 10)
+
+        # 低波动减仓
+        if volatility < 0.001:
+            position_size = int(position_size * 0.5)
     else:
-        if breakout_prob >= 70: position_size, position_reason = 20, "高概率试探20%"
-        elif breakout_prob >= 50: position_size, position_reason = 10, "中概率试探10%"
-    
-    if volatility < 0.001: position_size = int(position_size * 0.5)
-    elif volatility < 0.0015: position_size = int(position_size * 0.7)
-    
+        reasons = [f"评分{score}<50"]
+        if volatility < 0.001: reasons.append("低波动")
+        if vol_ratio < 1.0: reasons.append(f"缩量{vol_ratio:.1f}x")
+        if not breakout_long and trend_dir > 0: reasons.append("未突破")
+
     return {
-        "signal": signal, "trend": trend, "entry_price": close, "stop_loss": stop_loss,
-        "take_profit": take_profit, "confidence": confidence, "volatility": volatility,
-        "vol_ratio": vol_ratio, "breakout_long": breakout_long, "breakout_short": breakout_short,
-        "breakout_prob": breakout_prob, "position_size": position_size, "position_reason": position_reason,
-        "reasons": reasons
+        "signal": signal,
+        "signal_type": signal_type,
+        "trend": trend,
+        "entry_price": close,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "confidence": score / 100,
+        "volatility": volatility,
+        "vol_ratio": vol_ratio,
+        "breakout_long": breakout_long,
+        "breakout_short": breakout_short,
+        "breakout_prob": score,  # 评分即概率
+        "position_size": position_size,
+        "position_reason": f"评分{score}→{position_size}%仓",
+        "reasons": reasons,
+        "score": score,
+        "score_details": score_details
     }
 
 # ==================== 数据获取 ====================
@@ -366,7 +391,9 @@ df["tp"] = tps
 # 回测
 def backtest(df, lookback=100, max_bars=30):
     recent = df.tail(lookback).copy()
-    trades = recent[recent["signal"].isin(["强做多", "强做空", "弱做多", "弱做空"])]
+    # v10: 包含所有信号类型
+    trade_signals = ["强做多", "强做空", "中做多", "中做空", "弱做多", "弱做空", "震荡多", "震荡空"]
+    trades = recent[recent["signal"].isin(trade_signals)]
     if len(trades) == 0:
         return {"total": 0, "wins": 0, "losses": 0, "win_rate": 0, "freq": 0, "avg_win": 0, "avg_loss": 0, "expectancy": 0, "records": []}
     wins, losses, win_pnls, loss_pnls, records = 0, 0, [], [], []
@@ -431,26 +458,32 @@ with col3:
 st.divider()
 
 # 核心指标
-c1, c2, c3, c4, c5 = st.columns(5)
+c1, c2, c3, c4, c5, c6 = st.columns(6)
 c1.metric("趋势", last["trend"], delta="多头" if last["trend"]=="多头" else "空头")
 c2.metric("RSI", f"{last['rsi']:.0f}", delta="✓" if 45 <= last['rsi'] <= 55 else "⚠")
 c3.metric("波动率", f"{last_volatility*100:.2f}%", delta="✓" if last_volatility >= 0.0015 else "低")
 c4.metric("成交量", f"{last_vol:.1f}x", delta="✓" if last_vol >= 1.5 else "缩量")
-c5.metric("突破概率", f"{last_prob:.0f}%")
+c5.metric("AI评分", f"{last_prob}", delta="强" if last_prob >= 80 else "中" if last_prob >= 60 else "弱")
+c6.metric("建议仓位", f"{last_pos}%")
 
-# 信号显示
+# 信号显示 (v10更新)
 st.divider()
+trade_signals = ["强做多", "强做空", "中做多", "中做空", "弱做多", "弱做空", "震荡多", "震荡空"]
 if sig == "强做多":
-    st.success(f"### 🟢 {sig} | 仓位 {last_pos}% | 信心 {confs[-2]*100:.0f}%")
+    st.success(f"### 🟢 {sig} | AI评分 {last_prob} | 仓位 {last_pos}%")
 elif sig == "强做空":
-    st.error(f"### 🔴 {sig} | 仓位 {last_pos}% | 信心 {confs[-2]*100:.0f}%")
+    st.error(f"### 🔴 {sig} | AI评分 {last_prob} | 仓位 {last_pos}%")
+elif sig in ["中做多", "中做空"]:
+    st.info(f"### 🔵 {sig} | AI评分 {last_prob} | 仓位 {last_pos}%")
 elif sig in ["弱做多", "弱做空"]:
-    st.info(f"### 🟡 {sig} | 仓位 {last_pos}% | 信心 {confs[-2]*100:.0f}%")
+    st.warning(f"### 🟡 {sig} | AI评分 {last_prob} | 仓位 {last_pos}%")
+elif sig in ["震荡多", "震荡空"]:
+    st.info(f"### 🔄 {sig} | 震荡策略 | 仓位 {last_pos}%")
 else:
-    st.warning(f"### ⚪ {sig}")
+    st.warning(f"### ⚪ {sig} | AI评分 {last_prob}")
 
 # 交易计划
-if sig in ["强做多", "弱做多", "强做空", "弱做空"]:
+if sig in trade_signals:
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("入场价", f"${last['close']:.2f}")
     col2.metric("止损", f"${last['sl']:.2f}")
@@ -476,8 +509,14 @@ with tab1:
     fig.add_hline(y=last["high20"], line_dash="dash", line_color="red", opacity=0.5)
     fig.add_hline(y=last["low20"], line_dash="dash", line_color="green", opacity=0.5)
     
-    # 信号标记
-    for s, color, sym in [("强做多","lime",15),("强做空","red",15),("弱做多","lightgreen",8),("弱做空","lightcoral",8)]:
+    # 信号标记 (v10更新)
+    signal_colors = [
+        ("强做多", "lime", 15), ("强做空", "red", 15),
+        ("中做多", "cyan", 12), ("中做空", "orange", 12),
+        ("弱做多", "lightgreen", 8), ("弱做空", "lightcoral", 8),
+        ("震荡多", "yellow", 10), ("震荡空", "magenta", 10)
+    ]
+    for s, color, sym in signal_colors:
         mask = df["signal"] == s
         if mask.any():
             fig.add_trace(go.Scatter(x=df["time"][mask], y=df["close"][mask], mode="markers",
