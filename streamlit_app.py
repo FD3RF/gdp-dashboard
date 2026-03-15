@@ -787,30 +787,44 @@ with tab1:
     
     # ★ 动态设置Y轴范围（根据最近100根有效K线）
     # 过滤掉价格为0或异常的K线
-    df_valid = df[df['high'] > 0].copy()
-    if len(df_valid) > 0:
-        n = min(100, len(df_valid))
-        recent_high = df_valid['high'].tail(n).max()
-        recent_low = df_valid['low'].tail(n).min()
+    df_plot = df[df['high'] > 0].copy()
+    
+    if len(df_plot) > 0:
+        n = min(100, len(df_plot))
+        recent_high = float(df_plot['high'].tail(n).max())
+        recent_low = float(df_plot['low'].tail(n).min())
         
-        # 确保有效范围
-        if pd.notna(recent_high) and pd.notna(recent_low) and recent_high > recent_low:
-            padding = (recent_high - recent_low) * 0.05
-            y_range = [recent_low - padding, recent_high + padding]
-        else:
-            y_range = None  # 使用自动范围
+        # 计算边距（至少10美元）
+        price_range = recent_high - recent_low
+        padding = max(price_range * 0.1, 10)  # 10%边距或至少10美元
+        
+        y_min = recent_low - padding
+        y_max = recent_high + padding
+        
+        # 更新布局（包含Y轴范围）
+        fig.update_layout(
+            template="plotly_dark", 
+            height=550, 
+            xaxis_rangeslider_visible=False,
+            showlegend=True, 
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(l=10, r=10, t=30, b=10),
+            yaxis=dict(
+                range=[y_min, y_max],
+                title="价格 (USDT)",
+                autorange=False
+            )
+        )
     else:
-        y_range = None
-    
-    fig.update_layout(
-        template="plotly_dark", height=550, xaxis_rangeslider_visible=False,
-        showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        margin=dict(l=10, r=10, t=30, b=10)
-    )
-    
-    # 设置Y轴范围（如果计算有效）
-    if y_range:
-        fig.update_yaxes(range=y_range, title="价格 (USDT)")
+        # 如果没有有效数据，使用默认设置
+        fig.update_layout(
+            template="plotly_dark", 
+            height=550, 
+            xaxis_rangeslider_visible=False,
+            showlegend=True, 
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            margin=dict(l=10, r=10, t=30, b=10)
+        )
     
     st.plotly_chart(fig, width='stretch')
     
