@@ -312,6 +312,7 @@ for idx, row in df.iterrows():
     position_reasons.append(result["position_reason"])
 
 df["signal"] = signals
+df["trend"] = trends
 df["sl"] = sls
 df["tp"] = tps
 
