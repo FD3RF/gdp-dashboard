@@ -164,11 +164,11 @@ def get_eth_signal(kline, atr, avg_volume, params=None):
 
 # ==================== 数据获取 ====================
 def get_data(limit=500):
-    """获取K线数据，带重试机制和验证"""
+    """获取K线数据，多数据源备用"""
     import time
     import os
-    
-    # 尝试Binance (最多3次)
+
+    # 1. 尝试Binance (最多3次)
     for attempt in range(3):
         try:
             url = f"https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=5m&limit={limit}"
@@ -179,11 +179,10 @@ def get_data(limit=500):
                 df["time"] = pd.to_datetime(df["open_time"], unit="ms")
                 for col in ["open","high","low","close","volume"]: df[col] = pd.to_numeric(df[col])
                 return df.sort_values("time").reset_index(drop=True), "Binance"
-        except Exception as e:
+        except:
             if attempt < 2: time.sleep(1)
-            continue
-    
-    # 尝试OKX (最多3次)
+
+    # 2. 尝试OKX (最多3次)
     for attempt in range(3):
         try:
             url = f"https://www.okx.com/api/v5/market/candles?instId=ETH-USDT&bar=5m&limit={limit}"
@@ -194,9 +193,57 @@ def get_data(limit=500):
                 df["time"] = pd.to_datetime(df["time"])
                 for col in ["open","high","low","close","volume"]: df[col] = pd.to_numeric(df[col])
                 return df.sort_values("time").reset_index(drop=True), "OKX"
-        except Exception as e:
+        except:
             if attempt < 2: time.sleep(1)
-            continue
+
+    # 3. 尝试CoinGecko (免费API)
+    try:
+        url = "https://api.coingecko.com/api/v3/coins/ethereum/ohlc?vs_currency=usd&days=1"
+        r = requests.get(url, timeout=15)
+        data = r.json()
+        if isinstance(data, list) and len(data) > 50:
+            # CoinGecko返回 [timestamp, open, high, low, close]
+            df = pd.DataFrame(data, columns=["time", "open", "high", "low", "close"])
+            df["time"] = pd.to_datetime(df["time"], unit="ms")
+            df["volume"] = 0  # CoinGecko OHLC不含成交量
+            for col in ["open","high","low","close"]: df[col] = pd.to_numeric(df[col])
+            return df.sort_values("time").reset_index(drop=True), "CoinGecko"
+    except:
+        pass
+
+    # 4. 尝试CryptoCompare
+    try:
+        url = f"https://min-api.cryptocompare.com/data/v2/histominute?fsym=ETH&tsym=USD&limit={min(limit, 2000)}"
+        r = requests.get(url, timeout=15)
+        result = r.json()
+        if result.get("Response") == "Success" and result.get("Data", {}).get("Data"):
+            data = result["Data"]["Data"]
+            df = pd.DataFrame(data)
+            df = df[["time", "open", "high", "low", "close", "volumefrom"]].copy()
+            df.columns = ["time", "open", "high", "low", "close", "volume"]
+            df["time"] = pd.to_datetime(df["time"], unit="s")
+            for col in ["open","high","low","close","volume"]: df[col] = pd.to_numeric(df[col])
+            df = df[df["close"] > 0]
+            return df.sort_values("time").reset_index(drop=True), "CryptoCompare"
+    except:
+        pass
+
+    # 5. 尝试CoinCap
+    try:
+        url = f"https://api.coincap.io/v2/assets/ethereum/history?interval=m5&limit={limit}"
+        r = requests.get(url, timeout=15)
+        result = r.json()
+        if result.get("data"):
+            data = result["data"]
+            df = pd.DataFrame(data)
+            df = df[["time", "priceUsd"]].copy()
+            df["time"] = pd.to_datetime(df["time"], unit="ms")
+            df["priceUsd"] = pd.to_numeric(df["priceUsd"], errors="coerce")
+            df["open"] = df["high"] = df["low"] = df["close"] = df["priceUsd"]
+            df["volume"] = 0
+            return df.sort_values("time").reset_index(drop=True), "CoinCap"
+    except:
+        pass
     
     # 使用本地历史数据 (尝试多个路径)
     local_paths = [
