@@ -557,31 +557,109 @@ with tab1:
     fig = go.Figure()
     fig.add_trace(go.Candlestick(x=df["time"], open=df["open"], high=df["high"], low=df["low"], close=df["close"],
                                   increasing_line_color='#26a69a', decreasing_line_color='#ef5350', name="ETH"))
-    fig.add_trace(go.Scatter(x=df["time"], y=df["ema50"], line=dict(color='orange', width=1), name="EMA50"))
+    fig.add_trace(go.Scatter(x=df["time"], y=df["ema20"], line=dict(color='yellow', width=1), name="EMA20"))
+    fig.add_trace(go.Scatter(x=df["time"], y=df["ema50"], line=dict(color='orange', width=1.5), name="EMA50"))
     fig.add_trace(go.Scatter(x=df["time"], y=df["ema200"], line=dict(color='blue', width=2), name="EMA200"))
-    fig.add_hline(y=last["high20"], line_dash="dash", line_color="red", opacity=0.5)
-    fig.add_hline(y=last["low20"], line_dash="dash", line_color="green", opacity=0.5)
     
-    # 信号标记 (v10更新)
+    # 支撑阻力线
+    fig.add_hline(y=last["high20"], line_dash="dash", line_color="red", opacity=0.5, annotation_text="阻力")
+    fig.add_hline(y=last["low20"], line_dash="dash", line_color="green", opacity=0.5, annotation_text="支撑")
+    
+    # ===== 四种信号标记 =====
+    # 1️⃣ 抄底信号 (RSI<=30 + 放量) - 绿色向上箭头
+    buy_dip = (df["rsi9"] <= 30) & (df["volume"] >= df["vol_ma"] * 1.5)
+    if buy_dip.any():
+        fig.add_trace(go.Scatter(
+            x=df["time"][buy_dip], y=df["low"][buy_dip] * 0.997,
+            mode="markers+text", text="💰", textposition="bottom center",
+            marker=dict(symbol="arrow-up", size=12, color="lime"),
+            name="抄底"
+        ))
+    
+    # 2️⃣ 逃顶信号 (RSI>=70 + 放量) - 红色向下箭头
+    escape_top = (df["rsi9"] >= 70) & (df["volume"] >= df["vol_ma"] * 1.5)
+    if escape_top.any():
+        fig.add_trace(go.Scatter(
+            x=df["time"][escape_top], y=df["high"][escape_top] * 1.003,
+            mode="markers+text", text="⚠️", textposition="top center",
+            marker=dict(symbol="arrow-down", size=12, color="red"),
+            name="逃顶"
+        ))
+    
+    # 3️⃣ 区间支撑/阻力信号 - 黄色菱形
+    # 支撑反弹
+    support_bounce = (df["close"] <= df["low20"] * 1.005) & (df["rsi"] < 40)
+    if support_bounce.any():
+        fig.add_trace(go.Scatter(
+            x=df["time"][support_bounce], y=df["low"][support_bounce] * 0.998,
+            mode="markers", marker=dict(symbol="diamond", size=10, color="yellow", opacity=0.8),
+            name="支撑反弹"
+        ))
+    
+    # 阻力回落
+    resist_fall = (df["close"] >= df["high20"] * 0.995) & (df["rsi"] > 60)
+    if resist_fall.any():
+        fig.add_trace(go.Scatter(
+            x=df["time"][resist_fall], y=df["high"][resist_fall] * 1.002,
+            mode="markers", marker=dict(symbol="diamond", size=10, color="orange", opacity=0.8),
+            name="阻力回落"
+        ))
+    
+    # 4️⃣ 趋势波段回调信号 - 蓝色圆点
+    # 多头回调
+    pullback_long = (df["ema20"] > df["ema60"]) & (df["close"] >= df["ema20"] * 0.995) & (df["close"] <= df["ema20"] * 1.005)
+    if pullback_long.any():
+        fig.add_trace(go.Scatter(
+            x=df["time"][pullback_long], y=df["low"][pullback_long] * 0.999,
+            mode="markers", marker=dict(symbol="circle", size=8, color="cyan"),
+            name="回调买点"
+        ))
+    
+    # 空头回调
+    pullback_short = (df["ema20"] < df["ema60"]) & (df["close"] >= df["ema20"] * 0.995) & (df["close"] <= df["ema20"] * 1.005)
+    if pullback_short.any():
+        fig.add_trace(go.Scatter(
+            x=df["time"][pullback_short], y=df["high"][pullback_short] * 1.001,
+            mode="markers", marker=dict(symbol="circle", size=8, color="magenta"),
+            name="回调卖点"
+        ))
+    
+    # 交易信号标记 (强/中信号)
     signal_colors = [
         ("强做多", "lime", 15), ("强做空", "red", 15),
         ("中做多", "cyan", 12), ("中做空", "orange", 12),
-        ("弱做多", "lightgreen", 8), ("弱做空", "lightcoral", 8),
-        ("震荡多", "yellow", 10), ("震荡空", "magenta", 10)
     ]
-    for s, color, sym in signal_colors:
+    for s, color, sz in signal_colors:
         mask = df["signal"] == s
         if mask.any():
-            fig.add_trace(go.Scatter(x=df["time"][mask], y=df["close"][mask], mode="markers",
-                                     marker=dict(symbol="triangle-up" if "多" in s else "triangle-down", size=sym, color=color), name=s))
+            fig.add_trace(go.Scatter(
+                x=df["time"][mask], y=df["close"][mask],
+                mode="markers", marker=dict(symbol="triangle-up" if "多" in s else "triangle-down", size=sz, color=color),
+                name=s
+            ))
     
-    if sig in ["强做多", "弱做多", "强做空", "弱做空"] and last["sl"] > 0:
-        fig.add_hline(y=last["sl"], line_dash="dash", line_color="red", line_width=2)
-        fig.add_hline(y=last["tp"], line_dash="dash", line_color="green", line_width=2)
+    # 当前止损止盈线
+    trade_signals = ["强做多", "强做空", "中做多", "中做空"]
+    if sig in trade_signals and last["sl"] > 0:
+        fig.add_hline(y=last["sl"], line_dash="dash", line_color="red", line_width=2, annotation_text="SL")
+        fig.add_hline(y=last["tp"], line_dash="dash", line_color="green", line_width=2, annotation_text="TP")
     
-    fig.update_layout(template="plotly_dark", height=500, xaxis_rangeslider_visible=False, showlegend=False,
-                      margin=dict(l=10, r=10, t=10, b=10))
+    # 图例说明
+    legend_text = """
+    📊 信号说明:
+    💰 抄底信号 | ⚠️ 逃顶信号 | ◆ 支撑/阻力 | ● 回调买点
+    ▲ 做多信号 | ▼ 做空信号
+    """
+    
+    fig.update_layout(
+        template="plotly_dark", height=550, xaxis_rangeslider_visible=False,
+        showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=10, r=10, t=30, b=10)
+    )
     st.plotly_chart(fig, width='stretch')
+    
+    # 信号统计
+    st.caption(f"📊 信号统计: 抄底{buy_dip.sum()}次 | 逃顶{escape_top.sum()}次 | 支撑反弹{support_bounce.sum()}次 | 阻力回落{resist_fall.sum()}次 | 回调买点{pullback_long.sum()}次")
 
 with tab2:
     c1, c2, c3, c4, c5, c6 = st.columns(6)
