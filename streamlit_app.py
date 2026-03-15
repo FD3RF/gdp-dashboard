@@ -277,6 +277,15 @@ if data_source == "模拟数据":
     st.warning("⚠️ 使用模拟数据（API不可用）")
 elif data_source == "本地数据":
     st.info("📁 使用本地历史数据")
+
+# ★ 计算指标
+df = calc_indicators(df)
+df = df.dropna().reset_index(drop=True)
+
+if len(df) < 50:
+    st.error("❌ 有效数据不足")
+    st.stop()
+
 params = {"rsi_long": 55, "rsi_short": 45, "volume_mult": 1.5, "volatility_thresh": 0.0015, "stop_loss_mult": 1.8, "take_profit_mult": 2.8}
 
 # 应用信号
