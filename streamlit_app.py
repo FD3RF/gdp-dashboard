@@ -7,30 +7,34 @@ from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
 
 # 自动刷新
-st_autorefresh(interval=10000, key="refresh_v8_1")
+st_autorefresh(interval=10000, key="refresh_v8_2")
 
-st.set_page_config(page_title="ETH 5分钟交易系统 v8.1", layout="wide")
+st.set_page_config(page_title="ETH 5分钟交易系统 v8.2", layout="wide")
 
-# ==================== 参数设置 (优化版) ====================
+# ==================== 参数设置 (优化默认值) ====================
 st.sidebar.header("⚙️ 参数设置")
 
-st.sidebar.subheader("RSI阈值 (更严格)")
-rsi_long = st.sidebar.slider("做多RSI阈值", 50, 70, 58, 1, help="RSI > 此值才有做多动量，建议58+")
-rsi_short = st.sidebar.slider("做空RSI阈值", 30, 50, 42, 1, help="RSI < 此值才有做空动量，建议42-")
+st.sidebar.subheader("RSI阈值")
+rsi_long = st.sidebar.slider("做多RSI阈值", 50, 65, 55, 1, help="RSI > 此值才有做多动量")
+rsi_short = st.sidebar.slider("做空RSI阈值", 35, 50, 45, 1, help="RSI < 此值才有做空动量")
 
 st.sidebar.subheader("成交量过滤")
-vol_mult = st.sidebar.slider("成交量倍数", 1.0, 2.5, 1.5, 0.1, help="成交量必须 > 均量×倍数")
+vol_mult = st.sidebar.slider("成交量倍数", 1.0, 2.0, 1.2, 0.1, help="成交量必须 > 均量×倍数")
 
 st.sidebar.subheader("波动率过滤")
-min_volatility = st.sidebar.slider("最小波动率", 0.001, 0.005, 0.002, 0.0005, 
+min_volatility = st.sidebar.slider("最小波动率(%)", 0.1, 0.4, 0.15, 0.01, 
                                     help="ATR/价格 > 此值才交易，过滤低波动")
+use_dynamic_vol = st.sidebar.checkbox("启用动态波动率适配", True, help="低波动时自动降低阈值")
+
+st.sidebar.subheader("突破周期")
+breakout_period = st.sidebar.slider("突破周期", 10, 25, 15, 1, help="缩短周期增加信号")
 
 st.sidebar.subheader("止损止盈")
-stop_atr_mult = st.sidebar.slider("止损ATR倍数", 1.0, 3.0, 2.0, 0.1)
-take_atr_mult = st.sidebar.slider("止盈ATR倍数", 1.5, 5.0, 3.0, 0.1)
+stop_atr_mult = st.sidebar.slider("止损ATR倍数", 1.0, 3.0, 1.8, 0.1)
+take_atr_mult = st.sidebar.slider("止盈ATR倍数", 1.5, 4.0, 2.8, 0.1)
 
 st.sidebar.subheader("突破确认")
-require_close_confirm = st.sidebar.checkbox("要求收盘确认", True, help="收盘价必须突破，避免影线假突破")
+require_close_confirm = st.sidebar.checkbox("要求收盘确认", True)
 
 # ==================== 数据获取 ====================
 def generate_mock_data(n=300):
@@ -40,7 +44,7 @@ def generate_mock_data(n=300):
     data = []
     
     for _ in range(n):
-        change = np.random.normal(0, 0.003)  # 增加波动
+        change = np.random.normal(0, 0.003)
         open_p = price
         close_p = price * (1 + change)
         vol = abs(np.random.normal(0, 0.008))
@@ -136,23 +140,45 @@ df["atr"] = tr.rolling(14).mean()
 
 # 波动率
 df["volatility"] = df["atr"] / df["close"]
+df["avg_volatility"] = df["volatility"].rolling(50).mean()  # 平均波动率
 
-# 支撑阻力
-df["high20"] = df["high"].rolling(20).max()
-df["low20"] = df["low"].rolling(20).min()
+# 支撑阻力 (可调周期)
+df["high_break"] = df["high"].rolling(breakout_period).max()
+df["low_break"] = df["low"].rolling(breakout_period).min()
 
-# ==================== 信号生成 (优化逻辑) ====================
+# ==================== 动态参数适配 ====================
+def get_dynamic_params(row):
+    """根据市场状态动态调整参数"""
+    vol = row["volatility"] if pd.notna(row["volatility"]) else 0
+    avg_vol = row["avg_volatility"] if pd.notna(row["avg_volatility"]) else vol
+    
+    # 动态波动率阈值
+    if use_dynamic_vol:
+        if vol < min_volatility / 100:
+            # 低波动时，使用平均波动率的80%作为阈值
+            dyn_vol_threshold = max(avg_vol * 0.8, 0.001)
+        else:
+            dyn_vol_threshold = min_volatility / 100
+    else:
+        dyn_vol_threshold = min_volatility / 100
+    
+    # 动态RSI阈值 (高波动时更严格)
+    if vol > avg_vol * 1.2:
+        dyn_rsi_long = min(rsi_long + 3, 65)
+        dyn_rsi_short = max(rsi_short - 3, 35)
+    else:
+        dyn_rsi_long = rsi_long
+        dyn_rsi_short = rsi_short
+    
+    return dyn_vol_threshold, dyn_rsi_long, dyn_rsi_short
+
+# ==================== 信号生成 ====================
 def generate_signal(row):
-    """
-    信号触发顺序 (优化):
-    1. 趋势过滤 - EMA50 vs EMA200
-    2. 波动率过滤 - ATR/Price > 阈值
-    3. 动量确认 - RSI
-    4. 成交量确认 - 放量
-    5. 突破触发 - 突破20周期高低点
-    """
     signal = "HOLD"
     checks = {}
+    
+    # 动态参数
+    dyn_vol_thr, dyn_rsi_long, dyn_rsi_short = get_dynamic_params(row)
     
     # 1. 趋势过滤
     trend = "震荡"
@@ -164,88 +190,69 @@ def generate_signal(row):
     
     # 2. 波动率过滤
     volatility = row["volatility"] if pd.notna(row["volatility"]) else 0
-    vol_ok = volatility > min_volatility
+    vol_ok = volatility > dyn_vol_thr
     checks["波动率"] = f"{volatility*100:.2f}% {'✓' if vol_ok else '✗'}"
     
     if not vol_ok:
-        return signal, trend, checks, "波动率过低"
+        return signal, trend, checks, "波动率过低", dyn_vol_thr
     
     # 3. RSI动量
     rsi = row["rsi"] if pd.notna(row["rsi"]) else 50
-    checks["RSI"] = f"{rsi:.0f}"
+    checks["RSI"] = f"{rsi:.0f} (阈值{'>'+str(dyn_rsi_long) if trend=='多头' else '<'+str(dyn_rsi_short)})"
     
     # 4. 成交量
     vol_ratio = row["volume"] / row["vol_ma"] if pd.notna(row["vol_ma"]) and row["vol_ma"] > 0 else 0
     vol_ok = vol_ratio > vol_mult
-    checks["成交量"] = f"{vol_ratio:.1f}x {'✓' if vol_ok else '✗'}"
+    checks["成交量"] = f"{vol_ratio:.2f}x {'✓' if vol_ok else '✗'}"
     
-    # 5. 突破判断 (收盘确认)
+    # 5. 突破判断
     close = row["close"]
     if require_close_confirm:
-        break_high = close > row["high20"]
-        break_low = close < row["low20"]
+        break_high = close > row["high_break"]
+        break_low = close < row["low_break"]
     else:
-        break_high = row["high"] > row["high20"]
-        break_low = row["low"] < row["low20"]
+        break_high = row["high"] > row["high_break"]
+        break_low = row["low"] < row["low_break"]
     
     checks["突破高"] = "✓" if break_high else "✗"
     checks["突破低"] = "✓" if break_low else "✗"
     
     # ===== 做多判断 =====
     if trend == "多头":
-        conditions = []
+        rsi_ok = rsi > dyn_rsi_long
         
-        # RSI动量确认
-        if rsi > rsi_long:
-            conditions.append("RSI✓")
-        else:
-            checks["RSI"] = f"{rsi:.0f}✗ (需>{rsi_long})"
-        
-        # 成交量确认
-        if vol_ok:
-            conditions.append("放量✓")
-        
-        # 突破确认
-        if break_high:
-            conditions.append("突破✓")
-        
-        # 至少满足2个条件 + 趋势
-        if len(conditions) >= 2 and rsi > rsi_long and vol_ok:
+        if rsi_ok and vol_ok:
             signal = "LONG"
+        elif rsi_ok and not vol_ok:
+            signal = "WEAK_LONG"
+            checks["信号"] = "弱多(缩量)"
+        elif not rsi_ok:
+            checks["RSI"] += " ✗"
     
     # ===== 做空判断 =====
     elif trend == "空头":
-        conditions = []
+        rsi_ok = rsi < dyn_rsi_short
         
-        # RSI动量确认
-        if rsi < rsi_short:
-            conditions.append("RSI✓")
-        else:
-            checks["RSI"] = f"{rsi:.0f}✗ (需<{rsi_short})"
-        
-        # 成交量确认
-        if vol_ok:
-            conditions.append("放量✓")
-        
-        # 突破确认
-        if break_low:
-            conditions.append("跌破✓")
-        
-        # 至少满足2个条件 + 趋势
-        if len(conditions) >= 2 and rsi < rsi_short and vol_ok:
+        if rsi_ok and vol_ok:
             signal = "SHORT"
+        elif rsi_ok and not vol_ok:
+            signal = "WEAK_SHORT"
+            checks["信号"] = "弱空(缩量)"
+        elif not rsi_ok:
+            checks["RSI"] += " ✗"
     
-    block_reason = None if signal != "HOLD" else f"未满足条件"
-    return signal, trend, checks, block_reason
+    block_reason = None if signal in ["LONG", "SHORT"] else "条件未满足"
+    return signal, trend, checks, block_reason, dyn_vol_thr
 
 # 应用信号
-signals, trends, all_checks, block_reasons = [], [], [], []
+signals, trends, all_checks, block_reasons, dyn_vols = [], [], [], [], []
 for idx, row in df.iterrows():
-    sig, trend, checks, reason = generate_signal(row)
+    sig, trend, checks, reason, dyn_vol = generate_signal(row)
     signals.append(sig)
     trends.append(trend)
     all_checks.append(checks)
     block_reasons.append(reason)
+    dyn_vols.append(dyn_vol)
 
 df["signal"] = signals
 df["trend"] = trends
@@ -255,11 +262,11 @@ df["checks"] = all_checks
 last = df.iloc[-1]
 atr = last["atr"] if pd.notna(last["atr"]) else last["close"] * 0.01
 
-if last["signal"] == "LONG":
+if last["signal"] in ["LONG", "WEAK_LONG"]:
     stop_loss = last["close"] - stop_atr_mult * atr
     take_profit = last["close"] + take_atr_mult * atr
     risk_reward = take_atr_mult / stop_atr_mult
-elif last["signal"] == "SHORT":
+elif last["signal"] in ["SHORT", "WEAK_SHORT"]:
     stop_loss = last["close"] + stop_atr_mult * atr
     take_profit = last["close"] - take_atr_mult * atr
     risk_reward = take_atr_mult / stop_atr_mult
@@ -326,7 +333,7 @@ def backtest(df, lookback=100, max_bars=30):
 bt = backtest(df, 100, 30)
 
 # ==================== UI展示 ====================
-st.title("📊 ETH 5分钟交易系统 v8.1 优化版")
+st.title("📊 ETH 5分钟交易系统 v8.2 动态适配版")
 st.markdown(f"**数据源:** {data_source} | **价格:** ${last['close']:.2f} | **时间:** {last['time'].strftime('%Y-%m-%d %H:%M')}")
 
 # 核心指标
@@ -339,6 +346,8 @@ c5.metric("信号频率", f"{bt['signal_freq']:.1f}%")
 
 # 信号显示
 st.subheader("🎯 交易信号")
+checks = last["checks"]
+
 if last["signal"] == "LONG":
     st.success("🟢 **做多信号**")
     col1, col2, col3, col4 = st.columns(4)
@@ -353,40 +362,47 @@ elif last["signal"] == "SHORT":
     col2.metric("止损", f"${stop_loss:.2f}", f"+{(stop_loss-last['close'])/last['close']*100:.2f}%")
     col3.metric("止盈", f"${take_profit:.2f}", f"-{(last['close']-take_profit)/last['close']*100:.2f}%")
     col4.metric("盈亏比", f"{risk_reward:.1f}:1")
+elif last["signal"] == "WEAK_LONG":
+    st.info("🟡 **弱做多信号** - 缩量确认")
+    st.markdown(f"**建议:** 等待放量确认或轻仓试探")
+elif last["signal"] == "WEAK_SHORT":
+    st.info("🟡 **弱做空信号** - 缩量确认")
+    st.markdown(f"**建议:** 等待放量确认或轻仓试探")
 else:
     st.warning("⚪ **观望**")
-    last_checks = last["checks"]
-    st.markdown(f"""
-    **条件检查:**
-    - 趋势: {last_checks.get('趋势', 'N/A')}
-    - 波动率: {last_checks.get('波动率', 'N/A')}
-    - RSI: {last_checks.get('RSI', 'N/A')}
-    - 成交量: {last_checks.get('成交量', 'N/A')}
-    - 突破高: {last_checks.get('突破高', 'N/A')}
-    - 突破低: {last_checks.get('突破低', 'N/A')}
-    """)
 
-# 条件检查表
+# 条件检查表 (可视化)
 st.subheader("📋 条件检查")
-checks = last["checks"]
 cols = st.columns(6)
 
 trend_ok = checks.get("趋势", "震荡") != "震荡"
-cols[0].metric("趋势", checks.get("趋势", "N/A"), delta="✓" if trend_ok else "✗")
+cols[0].metric("趋势", checks.get("趋势", "N/A"), 
+               delta_color="normal" if trend_ok else "inverse",
+               delta="✓" if trend_ok else "✗")
 
 vol_ok = "✓" in checks.get("波动率", "")
-cols[1].metric("波动率", checks.get("波动率", "N/A"), delta="✓" if vol_ok else "✗")
+cols[1].metric("波动率", checks.get("波动率", "N/A"),
+               delta_color="normal" if vol_ok else "inverse",
+               delta="✓" if vol_ok else "✗")
 
 rsi = last["rsi"] if pd.notna(last["rsi"]) else 50
 rsi_ok = (rsi > rsi_long) if checks.get("趋势") == "多头" else (rsi < rsi_short) if checks.get("趋势") == "空头" else False
-cols[2].metric("RSI动量", checks.get("RSI", "N/A"), delta="✓" if rsi_ok else "✗")
+cols[2].metric("RSI动量", f"{rsi:.0f}",
+               delta_color="normal" if rsi_ok else "inverse",
+               delta="✓" if rsi_ok else "✗")
 
 vol_ratio = last["volume"] / last["vol_ma"] if pd.notna(last["vol_ma"]) and last["vol_ma"] > 0 else 0
 vol_str_ok = vol_ratio > vol_mult
-cols[3].metric("成交量", f"{vol_ratio:.1f}x", delta="✓" if vol_str_ok else "✗")
+cols[3].metric("成交量", f"{vol_ratio:.2f}x",
+               delta_color="normal" if vol_str_ok else "inverse",
+               delta="✓" if vol_str_ok else "✗")
 
 cols[4].metric("突破高", checks.get("突破高", "N/A"))
 cols[5].metric("突破低", checks.get("突破低", "N/A"))
+
+# 动态参数显示
+if use_dynamic_vol:
+    st.caption(f"🔧 动态适配: 波动率阈值={dyn_vols[-1]*100:.2f}%, RSI阈值={rsi_long}/{rsi_short}")
 
 # K线图
 st.subheader("📈 价格走势")
@@ -400,19 +416,23 @@ fig.add_trace(go.Candlestick(
 fig.add_trace(go.Scatter(x=df["time"], y=df["ema50"], name="EMA50", line=dict(color='orange', width=1.5)))
 fig.add_trace(go.Scatter(x=df["time"], y=df["ema200"], name="EMA200", line=dict(color='blue', width=2)))
 
-fig.add_hline(y=last["high20"], line_dash="dash", line_color="red", opacity=0.6, annotation_text="阻力")
-fig.add_hline(y=last["low20"], line_dash="dash", line_color="green", opacity=0.6, annotation_text="支撑")
+fig.add_hline(y=last["high_break"], line_dash="dash", line_color="red", opacity=0.6, annotation_text="阻力")
+fig.add_hline(y=last["low_break"], line_dash="dash", line_color="green", opacity=0.6, annotation_text="支撑")
 
-for sig, color, sym in [("LONG", "green", "triangle-up"), ("SHORT", "red", "triangle-down")]:
+# 信号标记
+for sig, color, sym, size in [("LONG", "green", "triangle-up", 12), 
+                               ("SHORT", "red", "triangle-down", 12),
+                               ("WEAK_LONG", "lightgreen", "triangle-up", 8),
+                               ("WEAK_SHORT", "lightcoral", "triangle-down", 8)]:
     mask = df["signal"] == sig
     if mask.any():
         fig.add_trace(go.Scatter(
             x=df["time"][mask], y=df["close"][mask], mode="markers",
-            marker=dict(symbol=sym, size=12, color=color), name=sig
+            marker=dict(symbol=sym, size=size, color=color), name=sig
         ))
 
 fig.update_layout(
-    title="ETH 5分钟 K线 + EMA趋势",
+    title=f"ETH 5分钟 K线 + EMA趋势 (突破周期={breakout_period})",
     xaxis_rangeslider_visible=False, height=450,
     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
 )
@@ -421,7 +441,7 @@ st.plotly_chart(fig, use_container_width=True)
 # 成交量
 fig_vol = go.Figure()
 fig_vol.add_trace(go.Bar(x=df["time"], y=df["volume"], name="成交量", marker_color='lightgray'))
-fig_vol.add_trace(go.Scatter(x=df["time"], y=df["vol_ma"] * vol_mult, name=f"均量×{vol_mult}", line=dict(color='red', dash='dash')))
+fig_vol.add_trace(go.Scatter(x=df["time"], y=df["vol_ma"] * vol_mult, name=f"阈值{vol_mult}x", line=dict(color='red', dash='dash')))
 fig_vol.add_trace(go.Scatter(x=df["time"], y=df["vol_ma"], name="均量20", line=dict(color='blue')))
 fig_vol.update_layout(title="成交量", height=120, showlegend=True)
 st.plotly_chart(fig_vol, use_container_width=True)
@@ -432,8 +452,18 @@ fig_rsi = go.Figure()
 fig_rsi.add_trace(go.Scatter(x=df["time"], y=df["rsi"], name="RSI", line=dict(color='purple')))
 fig_rsi.add_hline(y=rsi_long, line_dash="dash", line_color="green", annotation_text=f"做多{rsi_long}")
 fig_rsi.add_hline(y=rsi_short, line_dash="dash", line_color="red", annotation_text=f"做空{rsi_short}")
+fig_rsi.add_hline(y=50, line_dash="dot", line_color="gray")
 fig_rsi.update_layout(yaxis_range=[0, 100], height=150)
 st.plotly_chart(fig_rsi, use_container_width=True)
+
+# 波动率
+st.subheader("📊 波动率")
+fig_vol2 = go.Figure()
+fig_vol2.add_trace(go.Scatter(x=df["time"], y=df["volatility"]*100, name="当前波动率", line=dict(color='orange')))
+fig_vol2.add_trace(go.Scatter(x=df["time"], y=df["avg_volatility"]*100, name="平均波动率", line=dict(color='blue', dash='dash')))
+fig_vol2.add_hline(y=min_volatility, line_dash="dash", line_color="red", annotation_text=f"阈值{min_volatility}%")
+fig_vol2.update_layout(title="ATR/价格 波动率", height=150)
+st.plotly_chart(fig_vol2, use_container_width=True)
 
 # 回测统计
 st.subheader("📊 回测统计")
@@ -446,7 +476,7 @@ c5.metric("平均亏损", f"{bt['avg_loss']:.2f}%")
 
 # 最近信号
 st.subheader("📋 最近信号")
-recent_sig = df[df["signal"].isin(["LONG", "SHORT"])].tail(10)[["time", "close", "signal", "trend"]]
+recent_sig = df[df["signal"].isin(["LONG", "SHORT", "WEAK_LONG", "WEAK_SHORT"])].tail(10)[["time", "close", "signal", "trend"]]
 if len(recent_sig) > 0:
     recent_sig = recent_sig.copy()
     recent_sig["time"] = recent_sig["time"].dt.strftime('%Y-%m-%d %H:%M')
@@ -457,19 +487,17 @@ else:
 
 # 策略说明
 st.sidebar.markdown("---")
-st.sidebar.subheader("📖 策略说明")
+st.sidebar.subheader("📖 当前参数")
 st.sidebar.info(f"""
-**信号触发顺序:**
-1. 趋势过滤 (EMA50 vs EMA200)
-2. 波动率过滤 (>{min_volatility*100:.1f}%)
-3. RSI动量确认 (>{rsi_long} / <{rsi_short})
-4. 成交量确认 (>{vol_mult}x均量)
-5. 突破触发 (20周期高低点)
+**动态适配:** {'启用' if use_dynamic_vol else '禁用'}
 
-**风控:**
-- 止损 = {stop_atr_mult} × ATR
-- 止盈 = {take_atr_mult} × ATR
-- 盈亏比 = 1:{take_atr_mult/stop_atr_mult:.1f}
+**RSI阈值:** {rsi_long}/{rsi_short}
+**成交量:** >{vol_mult}x均量
+**波动率:** >{min_volatility}%
+**突破周期:** {breakout_period}
+**止损:** {stop_atr_mult} ATR
+**止盈:** {take_atr_mult} ATR
+**盈亏比:** 1:{take_atr_mult/stop_atr_mult:.1f}
 
-**当前胜率:** {bt['win_rate']:.1f}%
+**回测胜率:** {bt['win_rate']:.1f}%
 """)
